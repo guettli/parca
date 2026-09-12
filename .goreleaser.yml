@@ -8,20 +8,28 @@ builds:
     binary: parca
     # https://goreleaser.com/customization/build/#reproducible-builds
     mod_timestamp: "{{ .CommitTimestamp }}"
+    # The embedded DuckDB storage backend (github.com/marcboeker/go-duckdb)
+    # links a static libduckdb through cgo, so the binary MUST be built with
+    # CGO_ENABLED=1 and a C/C++ toolchain. cgo cross-compilation with the
+    # prebuilt libduckdb is impractical, so this single-node build targets
+    # linux/amd64 only (a CGO_ENABLED=0 build fails to link the
+    # duckdb-go-bindings, e.g. "undefined: bindings.Type"). See
+    # Dockerfile.duckdb / docs/duckdb-image.md for the same gotchas.
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos:
       - linux
-      - darwin
-      - windows
     goarch:
       - amd64
-      - arm64
     flags:
       - -trimpath
       - -v
     ldflags:
       # Default is `-s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser`.
+      # -static-libstdc++/-static-libgcc fold the C++ runtime into the binary so
+      # it only depends on glibc at runtime (matches Dockerfile.duckdb).
+      - -linkmode external
+      - -extldflags '-static-libstdc++ -static-libgcc'
       - -X main.version={{.Version}} -X main.commit={{.Commit}}
 archives:
     # e.g. parca_0.15.0_Darwin_arm64.tar.gz, parca_0.15.0_Darwin_x86_64.tar.gz, parca_0.15.0_Linux_arm64.tar.gz, parca_0.15.0_Linux_x86_64.tar.gz
