@@ -23,7 +23,8 @@ RUN npm install --global "pnpm@${PNPM_VERSION}"
 WORKDIR /app
 # The pnpm workspace root is ui/ (ui/pnpm-workspace.yaml, ui/pnpm-lock.yaml).
 COPY ui ./ui
-RUN cd ui && pnpm install --frozen-lockfile --prefer-offline && pnpm run build
+WORKDIR /app/ui
+RUN pnpm install --frozen-lockfile --prefer-offline && pnpm run build
 
 # ---------------------------------------------------------------------------
 # 2. Build the Parca binary with the DuckDB backend (needs cgo + glibc).
@@ -36,10 +37,9 @@ ARG GRPC_HEALTH_PROBE_VERSION=v0.4.47
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN go mod download
-
 # grpc_health_probe is a static Go binary used as the container health check.
-RUN go install "github.com/grpc-ecosystem/grpc-health-probe@${GRPC_HEALTH_PROBE_VERSION}"
+RUN go mod download && \
+    go install "github.com/grpc-ecosystem/grpc-health-probe@${GRPC_HEALTH_PROBE_VERSION}"
 
 COPY cmd ./cmd
 COPY pkg ./pkg
