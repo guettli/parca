@@ -138,6 +138,21 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Parca now stores profile data in ClickHouse (the default storage backend),
+    # and exits on start-up if it can't reach it. The snap has restart-condition
+    # `never`, so provide a ClickHouse instance on the default address
+    # (localhost:9000) and wait for it to be healthy before the snap is started.
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        ports:
+          - 9000:9000
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
