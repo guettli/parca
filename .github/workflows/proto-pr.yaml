@@ -62,5 +62,9 @@ jobs:
       - uses: bufbuild/buf-breaking-action@c57b3d842a5c3f3b454756ef65305a50a587c5ba # v1.1.4
         with:
           input: 'proto'
-          # The 'main' branch of the GitHub repository that defines the module.
-          against: 'https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=proto'
+          # Compare against the base branch of this fork line. The
+          # 'duckdb-backend' branch intentionally diverges its proto from
+          # upstream 'main' (the FrostDB-removal stack removed fields such as
+          # Profile.doc_url and Line.column), so comparing against 'main' would
+          # always report those intentional deletions as breaking changes.
+          against: 'https://github.com/${GITHUB_REPOSITORY}.git#branch=duckdb-backend,subdir=proto'
