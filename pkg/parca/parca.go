@@ -63,7 +63,6 @@ import (
 	"github.com/parca-dev/parca/pkg/clickhouse"
 	"github.com/parca-dev/parca/pkg/config"
 	"github.com/parca-dev/parca/pkg/debuginfo"
-	"github.com/parca-dev/parca/pkg/duckdb"
 	"github.com/parca-dev/parca/pkg/kv"
 	"github.com/parca-dev/parca/pkg/parcacol"
 	"github.com/parca-dev/parca/pkg/profilestore"
@@ -341,29 +340,11 @@ func Run(ctx context.Context, logger log.Logger, reg *prometheus.Registry, flags
 	case "duckdb":
 		level.Info(logger).Log("msg", "initializing DuckDB storage backend", "path", duckdbPathDescription(flags.DuckDB.Path))
 
-		ddClient, err := duckdb.NewClient(ctx, duckdb.Config{
-			Path:  flags.DuckDB.Path,
-			Table: flags.DuckDB.Table,
-		})
+		profileIngester, querier, closeBackend, err = newDuckDBBackend(ctx, logger, tracerProvider, sharedSymbolizer, flags.DuckDB)
 		if err != nil {
-			level.Error(logger).Log("msg", "failed to open DuckDB", "err", err)
-			return fmt.Errorf("failed to open DuckDB: %w", err)
+			level.Error(logger).Log("msg", "failed to initialize DuckDB storage backend", "err", err)
+			return err
 		}
-		if err := ddClient.EnsureSchema(ctx); err != nil {
-			ddClient.Close()
-			level.Error(logger).Log("msg", "failed to ensure DuckDB schema", "err", err)
-			return fmt.Errorf("failed to ensure DuckDB schema: %w", err)
-		}
-
-		profileIngester = duckdb.NewIngester(logger, ddClient)
-		querier = duckdb.NewQuerier(
-			ddClient,
-			logger,
-			tracerProvider.Tracer("duckdb-querier"),
-			memory.DefaultAllocator,
-			sharedSymbolizer,
-		)
-		closeBackend = ddClient.Close
 
 	case "clickhouse", "":
 		level.Info(logger).Log("msg", "initializing ClickHouse storage backend", "address", flags.ClickHouse.Address)

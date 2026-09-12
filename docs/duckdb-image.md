@@ -32,7 +32,12 @@ ships on an **alpine (musl)** base. That path does **not** work for DuckDB:
 - **CGO is mandatory.** The backend depends on
   `github.com/marcboeker/go-duckdb/v2`, which links a static `libduckdb`
   through cgo. The build must run with `CGO_ENABLED=1` and a C/C++ toolchain
-  (`.goreleaser.yml` pins `CGO_ENABLED=0`).
+  (`.goreleaser.yml` pins `CGO_ENABLED=0`). Because go-duckdb cannot be
+  cross-compiled CGO-free, the backend is guarded by the `duckdb` build tag: it
+  is only compiled into `cmd/parca` when built with `-tags duckdb`. The default
+  (release) build omits the tag and uses a stub that returns an error if
+  `--storage-backend=duckdb` is selected, keeping the CGO-free cross-compiled
+  goreleaser build working.
 - **glibc, not musl.** The prebuilt `libduckdb` static libraries
   (`github.com/duckdb/duckdb-go-bindings/linux-amd64`) are compiled against
   glibc/libstdc++. The resulting binary links `libstdc++`, `libgcc_s` and
@@ -54,7 +59,8 @@ ships on an **alpine (musl)** base. That path does **not** work for DuckDB:
    - `pnpm run build` inside `ui/` (its own pnpm workspace root).
 2. **go-builder** (`golang:1.26-bookworm`, has gcc/g++ + glibc): copies the
    built UI into `ui/packages/app/web/build`, then
-   `CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build ./cmd/parca`. It also
+   `CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags duckdb ./cmd/parca`
+   (the `duckdb` tag pulls in the cgo backend). It also
    `go install`s `grpc_health_probe` for the container health check.
 3. **runner** (`gcr.io/distroless/cc-debian12:nonroot`): copies the binary,
    `grpc_health_probe`, `parca.yaml` and a writable `/data` owned by the

@@ -54,7 +54,7 @@ ARG COMMIT=unknown
 # -static-libstdc++/-static-libgcc fold the C++ runtime into the binary so it
 # only depends on glibc at runtime (keeps the runtime base minimal/portable).
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-    go build -trimpath \
+    go build -trimpath -tags duckdb \
     -ldflags "-linkmode external -extldflags '-static-libstdc++ -static-libgcc' -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /parca ./cmd/parca
 
