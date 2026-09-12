@@ -78,6 +78,11 @@ COPY --from=go-builder /go/bin/grpc-health-probe /grpc_health_probe
 COPY --from=go-builder /parca /parca
 COPY parca.yaml /parca.yaml
 
+# Parca reads ./parca.yaml and writes object storage to ./data relative to the
+# working directory. The distroless nonroot image defaults WORKDIR to
+# /home/nonroot, so pin it to / (matching the stock image) to find /parca.yaml
+# and use the writable /data directory.
+WORKDIR /
 USER 65532:65532
 EXPOSE 7070
 ENTRYPOINT ["/parca"]
