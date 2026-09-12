@@ -145,6 +145,16 @@ jobs:
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:24.8
+        # The snap runs Parca with its built-in defaults (user "default", empty
+        # password, database "parca") and exposes no way to configure ClickHouse
+        # credentials. By default the image's entrypoint runs a user-setup step
+        # that leaves the "default" user unable to authenticate with an empty
+        # password over the network, so start-up fails with a code 516
+        # "Authentication failed" error. CLICKHOUSE_SKIP_USER_SETUP=1 skips that
+        # step and keeps the built-in passwordless "default" user reachable from
+        # any address (::/0), matching Parca's defaults.
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: 1
         ports:
           - 9000:9000
           - 8123:8123
