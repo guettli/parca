@@ -28,7 +28,6 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/gogo/status"
-	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/promql/parser"
 	"go.opentelemetry.io/otel/trace"
@@ -39,10 +38,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	profilestorepb "github.com/parca-dev/parca/gen/proto/go/parca/profilestore/v1alpha1"
-	"github.com/parca-dev/parca/pkg/ingester"
 	"github.com/parca-dev/parca/pkg/normalizer"
 	"github.com/parca-dev/parca/pkg/profile"
 )
+
+// Ingester accepts an Arrow record of profile rows and writes them to the
+// underlying storage backend.
+type Ingester interface {
+	Ingest(ctx context.Context, record arrow.RecordBatch) error
+}
 
 type agent struct {
 	nodeName         string
@@ -60,14 +64,13 @@ type ProfileColumnStore struct {
 	logger log.Logger
 	tracer trace.Tracer
 
-	ingester ingester.Ingester
+	ingester Ingester
 
 	mtx sync.Mutex
 	// ip as the key
 	agents map[string]agent
 
-	mem    memory.Allocator
-	schema *dynparquet.Schema
+	mem memory.Allocator
 
 	converterMetrics *normalizer.Metrics
 }
@@ -78,8 +81,7 @@ func NewProfileColumnStore(
 	reg prometheus.Registerer,
 	logger log.Logger,
 	tracer trace.Tracer,
-	ingester ingester.Ingester,
-	schema *dynparquet.Schema,
+	ingester Ingester,
 	mem memory.Allocator,
 ) *ProfileColumnStore {
 	normalizerMetrics := normalizer.NewMetrics(reg)
@@ -87,7 +89,6 @@ func NewProfileColumnStore(
 		logger:   logger,
 		tracer:   tracer,
 		ingester: ingester,
-		schema:   schema,
 		mem:      mem,
 		agents:   make(map[string]agent),
 
@@ -100,7 +101,6 @@ func (s *ProfileColumnStore) writeSeries(ctx context.Context, req *profilestorep
 		ctx,
 		s.mem,
 		req,
-		s.schema,
 	)
 	if err != nil {
 		return err
@@ -278,7 +278,6 @@ func (s *ProfileColumnStore) WriteArrow(ctx context.Context, req *profilestorepb
 
 	c := normalizer.NewArrowToInternalConverter(
 		s.mem,
-		s.schema,
 		s.converterMetrics,
 	)
 	defer c.Release()
@@ -388,7 +387,6 @@ func (s *ProfileColumnStore) write(ctx context.Context, server profilestorepb.Pr
 
 	c := normalizer.NewArrowToInternalConverter(
 		s.mem,
-		s.schema,
 		s.converterMetrics,
 	)
 	defer c.Release()
@@ -473,7 +471,6 @@ func (s *ProfileColumnStore) Export(ctx context.Context, req *otelgrpcprofilingp
 	r, err := normalizer.OtlpRequestToArrowRecord(
 		ctx,
 		req,
-		s.schema,
 		s.mem,
 	)
 	if err != nil {

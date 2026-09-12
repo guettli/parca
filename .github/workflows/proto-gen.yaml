@@ -1,7 +1,14 @@
 name: proto-gen
 
+# Only gate PRs that target upstream 'main'. The 'proto/generate' target runs
+# `buf dep update`, which rewrites proto/buf.lock to the latest buf.build
+# registry commits on every run, so `git diff --exit-code` fails whenever the
+# registry has drifted since the lockfile was committed — unrelated to a PR's
+# own changes. The 'duckdb-backend' fork line must not be gated on that drift.
 on:
   pull_request:
+    branches:
+    - main
   merge_group:
     branches:
     - main
