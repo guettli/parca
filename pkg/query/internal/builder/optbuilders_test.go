@@ -141,6 +141,13 @@ func Test_BuildLargeArray(t *testing.T) {
 	if testing.Short() {
 		t.Skip("in short mode; skipping long test")
 	}
+	if raceDetectorEnabled {
+		// This test deliberately builds a >2GiB array to exercise uint32
+		// offset overflow. Under -race the shadow-memory overhead multiplies
+		// that allocation and exhausts memory on constrained CI runners,
+		// getting the whole `go test` process killed.
+		t.Skip("skipping memory-intensive >2GiB array build under -race")
+	}
 	alloc := memory.NewGoAllocator()
 	bldr := builder.NewBuilder(alloc, &arrow.BinaryType{})
 
