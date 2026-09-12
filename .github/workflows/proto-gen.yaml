@@ -1,7 +1,15 @@
 name: proto-gen
 
 on:
+  # See proto-pr.yaml: a declarative paths filter replaces the backtracking
+  # skip-check job, which never skipped on this branch.
   pull_request:
+    paths:
+      - '.github/workflows/proto-gen.yaml'
+      - '.go-version'
+      - 'buf.gen.yaml'
+      - 'buf.work.yaml'
+      - 'proto/**'
   merge_group:
     branches:
     - main
@@ -11,35 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  skip-check:
-    name: Skip check
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      should_skip: ${{ steps.skip-check.outputs.should_skip }}
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - id: skip-check
-        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
-        with:
-          do_not_skip: '["schedule", "workflow_dispatch"]'
-          paths: |-
-            [
-              ".github/workflows/proto-gen.yaml",
-              ".go-version",
-              "buf.gen.yaml",
-              "buf.work.yaml",
-              "proto/**"
-            ]
-          skip_after_successful_duplicate: false
-
   build:
     name: Proto Generate
-    needs: skip-check
-    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -50,5 +31,10 @@ jobs:
           version: 1.61.0
 
       - name: Generate
+        # Exclude proto/buf.lock from the drift check: `make proto/generate`
+        # runs `buf dep update`, which rewrites buf.lock to the latest BSR
+        # digests (we log in anonymously, no pinning), so the lock legitimately
+        # differs run-to-run. This check should verify generated *code* is
+        # current, not that the lockfile chases upstream BSR.
         run:
-          make proto/generate && git diff --exit-code ':!ui/packages/app/web/public/keep.go'
+          make proto/generate && git diff --exit-code ':!ui/packages/app/web/public/keep.go' ':!proto/buf.lock'
