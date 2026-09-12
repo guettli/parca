@@ -1,0 +1,84 @@
+# Dockerfile.duckdb — single-node Parca image built with the embedded DuckDB
+# storage backend (--storage-backend=duckdb).
+#
+# Unlike the release Dockerfile (which packages a pre-built, CGO-free binary
+# from goreleaser), the DuckDB backend depends on github.com/marcboeker/go-duckdb
+# which links a static libduckdb via cgo. That means the binary MUST be built
+# with CGO_ENABLED=1 and a C/C++ toolchain, and the resulting binary is linked
+# against glibc + libstdc++ — so it cannot run on a musl (alpine) base. This
+# file therefore does the full UI + cgo Go build itself and ships on a
+# glibc-based distroless image.
+#
+# See docs/duckdb-image.md for the build gotchas.
+
+# ---------------------------------------------------------------------------
+# 1. Build the web UI (embedded into the Go binary via ui/ui.go go:embed).
+# ---------------------------------------------------------------------------
+FROM docker.io/node:22.22.2-bookworm-slim AS ui-builder
+
+# renovate: datasource=npm depName=pnpm versioning=npm
+ARG PNPM_VERSION=10.33.0
+RUN npm install --global "pnpm@${PNPM_VERSION}"
+
+WORKDIR /app
+# The pnpm workspace root is ui/ (ui/pnpm-workspace.yaml, ui/pnpm-lock.yaml).
+COPY ui ./ui
+RUN cd ui && pnpm install --frozen-lockfile --prefer-offline && pnpm run build
+
+# ---------------------------------------------------------------------------
+# 2. Build the Parca binary with the DuckDB backend (needs cgo + glibc).
+# ---------------------------------------------------------------------------
+FROM docker.io/golang:1.26-bookworm AS go-builder
+
+# renovate: datasource=go depName=github.com/grpc-ecosystem/grpc-health-probe
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.47
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+# grpc_health_probe is a static Go binary used as the container health check.
+RUN go install "github.com/grpc-ecosystem/grpc-health-probe@${GRPC_HEALTH_PROBE_VERSION}"
+
+COPY cmd ./cmd
+COPY pkg ./pkg
+COPY proto ./proto
+COPY gen ./gen
+COPY ui/ui.go ./ui/ui.go
+COPY --from=ui-builder /app/ui/packages/app/web/build ./ui/packages/app/web/build
+
+ARG VERSION=duckdb-dev
+ARG COMMIT=unknown
+# CGO_ENABLED=1 is mandatory: go-duckdb links a static libduckdb through cgo.
+# -static-libstdc++/-static-libgcc fold the C++ runtime into the binary so it
+# only depends on glibc at runtime (keeps the runtime base minimal/portable).
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+    go build -trimpath \
+    -ldflags "-linkmode external -extldflags '-static-libstdc++ -static-libgcc' -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -o /parca ./cmd/parca
+
+# Pre-create a writable data directory owned by the distroless nonroot user
+# (uid/gid 65532); distroless has no shell so we cannot mkdir at runtime.
+RUN mkdir -p /data && touch /data/.keep && chown -R 65532:65532 /data
+
+# ---------------------------------------------------------------------------
+# 3. Runtime image — distroless "cc" (glibc + libstdc++ + libgcc), nonroot.
+# ---------------------------------------------------------------------------
+FROM gcr.io/distroless/cc-debian12:nonroot AS runner
+
+LABEL \
+    org.opencontainers.image.source="https://github.com/guettli/parca" \
+    org.opencontainers.image.url="https://github.com/guettli/parca" \
+    org.opencontainers.image.description="Parca continuous profiling — single-node build with the embedded DuckDB storage backend." \
+    org.opencontainers.image.licenses="Apache-2.0"
+
+COPY --from=go-builder --chown=65532:65532 /data /data
+COPY --from=go-builder /go/bin/grpc-health-probe /grpc_health_probe
+COPY --from=go-builder /parca /parca
+COPY parca.yaml /parca.yaml
+
+USER 65532:65532
+EXPOSE 7070
+ENTRYPOINT ["/parca"]
+CMD ["--storage-backend=duckdb", "--duckdb-path=/data/parca.duckdb"]
