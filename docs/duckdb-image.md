@@ -76,15 +76,19 @@ ships on an **alpine (musl)** base. That path does **not** work for DuckDB:
 
 ## Smoke test
 
-The CI workflow starts the container and asserts that:
+The CI workflow runs the container with a config that scrapes Parca's own
+`/debug/pprof` endpoints, then asserts that:
 
 1. the HTTP server comes up on `:7070`,
 2. the logs contain `initializing DuckDB storage backend` (proving the cgo
    DuckDB driver loaded and the flag took effect),
-3. the embedded UI is served at `/`, and
-4. the query API answers — `POST /parca.query.v1alpha1.QueryService/ProfileTypes`
-   returns `200`.
+3. the embedded UI is served at `/`,
+4. the query API answers — `GET /api/profiles/types` returns JSON, and
+5. profile data becomes queryable end to end — after a few self-scrapes,
+   `GET /api/profiles/types` reports a non-empty list of profile types.
 
-To also exercise ingestion end to end, point Parca at its own `/debug/pprof`
-endpoints with a `scrape_configs` entry in `parca.yaml` and re-query
-`ProfileTypes` after a few scrapes.
+The JSON/REST API is served by grpc-gateway under `/api` (the native gRPC
+service is multiplexed on the same `:7070` port over HTTP/2). Requests to an
+unknown path fall through to the single-page UI, so the smoke test parses the
+response as JSON to make sure it actually reached the query service rather than
+the SPA.

@@ -56,16 +56,34 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test — server starts, DuckDB backend loads, query API answers
+      - name: Smoke test — starts, ingests via self-scrape, and answers a query
         run: |
           set -euo pipefail
+
+          # Config: filesystem object storage + scrape Parca's own /debug/pprof
+          # endpoints so there is real profile data to query end to end.
+          cat > /tmp/parca-smoke.yaml <<'YAML'
+          object_storage:
+            bucket:
+              type: "FILESYSTEM"
+              config:
+                directory: "/data"
+          scrape_configs:
+            - job_name: "parca"
+              scrape_interval: "5s"
+              static_configs:
+                - targets: [ '127.0.0.1:7070' ]
+          YAML
+
           docker run -d --name parca-duckdb -p 7070:7070 \
+            -v /tmp/parca-smoke.yaml:/etc/parca/parca.yaml:ro \
             "${IMAGE}:${TAG}" \
-            --storage-backend=duckdb --duckdb-path=/data/parca.duckdb
+            --storage-backend=duckdb --duckdb-path=/data/parca.duckdb \
+            --config-path=/etc/parca/parca.yaml
 
           echo "Waiting for Parca HTTP server on :7070 ..."
           for i in $(seq 1 60); do
-            if curl -sfL -o /dev/null http://localhost:7070/; then
+            if curl -sfL -o /dev/null "http://localhost:7070/"; then
               echo "server is up"
               break
             fi
@@ -75,18 +93,39 @@ jobs:
             sleep 2
           done
 
-          echo "--- container logs ---"
-          docker logs parca-duckdb
-
           echo "Asserting the DuckDB backend was initialized ..."
           docker logs parca-duckdb 2>&1 | grep -q "initializing DuckDB storage backend"
 
           echo "Asserting the UI is served ..."
-          curl -sfL -o /dev/null http://localhost:7070/
+          curl -sfL "http://localhost:7070/" | grep -qiE 'parca|<body'
 
-          echo "Asserting the query API answers (ProfileTypes) ..."
-          curl -sf -X POST http://localhost:7070/parca.query.v1alpha1.QueryService/ProfileTypes \
-            -H 'Content-Type: application/json' -d '{}'
+          # The JSON/REST API is served by grpc-gateway under /api (native gRPC
+          # lives on the same port over HTTP/2). Hitting the API path directly
+          # returns JSON; an unknown path would fall through to the SPA (HTML).
+          echo "Asserting the query API answers (GET /api/profiles/types returns JSON) ..."
+          types_json=$(curl -sf "http://localhost:7070/api/profiles/types")
+          echo "ProfileTypes: ${types_json}"
+          # A JSON object proves we hit the API; HTML (the SPA fallback) fails jq.
+          echo "${types_json}" | jq -e 'type == "object"' >/dev/null
+
+          echo "Waiting for scraped profile data to be queryable ..."
+          count=0
+          for i in $(seq 1 30); do
+            types_json=$(curl -sf "http://localhost:7070/api/profiles/types" || echo '{}')
+            count=$(echo "${types_json}" | jq '(.types // []) | length')
+            has_data=$(curl -sf "http://localhost:7070/api/profiles/has_profile_data" | jq -r '.hasData // false' || echo false)
+            echo "attempt ${i}: profile types=${count} hasData=${has_data}"
+            if [ "${count:-0}" -gt 0 ]; then break; fi
+            sleep 3
+          done
+
+          echo "--- container logs ---"
+          docker logs parca-duckdb
+
+          if [ "${count:-0}" -le 0 ]; then
+            echo "no profile data became queryable within the timeout"; exit 1
+          fi
+          echo "query returned data (profile types=${count}) OK"
 
           docker rm -f parca-duckdb
 
