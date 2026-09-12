@@ -19,12 +19,11 @@
 package builder
 
 import (
-	"sync/atomic"
-
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/bitutil"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"go.uber.org/atomic"
 )
 
 const (
@@ -33,7 +32,7 @@ const (
 
 // builder provides common functionality for managing the validity bitmap (nulls) when building arrays.
 type builder struct {
-	refCount   int64
+	refCount   atomic.Int64
 	mem        memory.Allocator
 	nullBitmap *memory.Buffer
 	nulls      int
@@ -160,18 +159,20 @@ type ListBuilder struct {
 }
 
 func NewListBuilder(mem memory.Allocator, etype arrow.DataType) *ListBuilder {
-	return &ListBuilder{
-		builder: builder{refCount: 1, mem: mem},
+	b := &ListBuilder{
+		builder: builder{mem: mem},
 		etype:   etype,
 		values:  NewBuilder(mem, etype),
 		offsets: array.NewInt32Builder(mem),
 	}
+	b.refCount.Store(1)
+	return b
 }
 
 // Release decreases the reference count by 1.
 // When the reference count goes to zero, the memory is freed.
 func (b *ListBuilder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		if b.nullBitmap != nil {
 			b.nullBitmap.Release()
 			b.nullBitmap = nil

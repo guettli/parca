@@ -38,20 +38,20 @@ func (d Direction) comparison() int {
 	}
 }
 
-// SortingColumn describes a sorting column on a arrow.Record.
+// SortingColumn describes a sorting column on a arrow.RecordBatch.
 type SortingColumn struct {
 	Index      int
 	Direction  Direction
 	NullsFirst bool
 }
 
-// SortRecord sorts given arrow.Record by columns. Returns *array.Int32 of
+// SortRecord sorts given arrow.RecordBatch by columns. Returns *array.Int32 of
 // indices to sorted rows or record r.
 //
 // Comparison is made sequentially by each column. When rows are equal in the
 // first column we compare the rows om the second column and so on and so forth
 // until rows that are not equal are found.
-func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
+func SortRecord(r arrow.RecordBatch, columns []SortingColumn) (*array.Int32, error) {
 	if len(columns) == 0 {
 		return nil, errors.New("pqarrow/arrowutils: at least one column is needed for sorting")
 	}
@@ -68,7 +68,7 @@ func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 // that only contains rows specified in indices.
 //
 // Use compute.WithAllocator to pass a custom memory.Allocator.
-func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Record, error) {
+func Take(ctx context.Context, r arrow.RecordBatch, indices *array.Int32) (arrow.RecordBatch, error) {
 	// compute.Take doesn't support dictionaries or lists. Use take on r when r
 	// does not have these columns.
 	var customTake bool
@@ -135,7 +135,7 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 			)
 		}
 	}
-	return array.NewRecord(r.Schema(), resArr, int64(indices.Len())), nil
+	return array.NewRecordBatch(r.Schema(), resArr, int64(indices.Len())), nil
 }
 
 func TakeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, indices *array.Int32) error {
@@ -424,7 +424,7 @@ type multiColSorter struct {
 }
 
 func newMultiColSorter(
-	r arrow.Record,
+	r arrow.RecordBatch,
 	columns []SortingColumn,
 ) (*multiColSorter, error) {
 	ms := multiColSorterPool.Get().(*multiColSorter)

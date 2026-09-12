@@ -12,7 +12,7 @@ import (
 // where the schema is not equal, virtual null columns are inserted in the
 // records with the missing column. When we have static schemas in the execution
 // engine, steps like these should be unnecessary.
-func EnsureSameSchema(records []arrow.Record) ([]arrow.Record, error) {
+func EnsureSameSchema(records []arrow.RecordBatch) ([]arrow.RecordBatch, error) {
 	if len(records) < 2 {
 		return records, nil
 	}
@@ -51,8 +51,8 @@ func EnsureSameSchema(records []arrow.Record) ([]arrow.Record, error) {
 	}
 	mergedSchema := arrow.NewSchema(mergedFields, nil)
 
-	mergedRecords := make([]arrow.Record, len(records))
-	var replacedRecords []arrow.Record
+	mergedRecords := make([]arrow.RecordBatch, len(records))
+	var replacedRecords []arrow.RecordBatch
 
 	for i := range records {
 		recordSchema := records[i].Schema()
@@ -84,7 +84,7 @@ func EnsureSameSchema(records []arrow.Record) ([]arrow.Record, error) {
 		}
 
 		replacedRecords = append(replacedRecords, records[i])
-		mergedRecords[i] = array.NewRecord(mergedSchema, mergedColumns, recordNumRows)
+		mergedRecords[i] = array.NewRecordBatch(mergedSchema, mergedColumns, recordNumRows)
 	}
 
 	for _, r := range replacedRecords {

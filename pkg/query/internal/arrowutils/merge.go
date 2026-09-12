@@ -22,10 +22,10 @@ import (
 // WARNING: Only ascending ordering is currently supported.
 func MergeRecords(
 	mem memory.Allocator,
-	records []arrow.Record,
+	records []arrow.RecordBatch,
 	orderByCols []SortingColumn,
 	limit uint64,
-) (arrow.Record, error) {
+) (arrow.RecordBatch, error) {
 	h := cursorHeap{
 		cursors:     make([]cursor, len(records)),
 		orderByCols: orderByCols,
@@ -68,7 +68,7 @@ func MergeRecords(
 }
 
 type cursor struct {
-	r      arrow.Record
+	r      arrow.RecordBatch
 	curIdx int
 }
 
