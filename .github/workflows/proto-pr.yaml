@@ -1,7 +1,18 @@
 name: proto-pr
 
 on:
+  # Native path filter replaces the skip-duplicate-actions "skip-check" job:
+  # that job backtracks through history and refuses to skip once it hits any
+  # ancestor commit that touched proto files (the FrostDB-removal refactor did),
+  # so it never skipped here. A declarative paths filter is deterministic — the
+  # proto checks run only when proto/buf files actually change.
   pull_request:
+    paths:
+      - '.github/workflows/proto-pr.yaml'
+      - '.go-version'
+      - 'buf.gen.yaml'
+      - 'buf.work.yaml'
+      - 'proto/**'
   merge_group:
     branches:
     - main
@@ -11,35 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  skip-check:
-    name: Skip check
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      should_skip: ${{ steps.skip-check.outputs.should_skip }}
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - id: skip-check
-        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
-        with:
-          do_not_skip: '["schedule", "workflow_dispatch"]'
-          paths: |-
-            [
-              ".github/workflows/proto-pr.yaml",
-              ".go-version",
-              "buf.gen.yaml",
-              "buf.work.yaml",
-              "proto/**"
-            ]
-          skip_after_successful_duplicate: false
-
   build:
     name: Proto PR Checks
-    needs: skip-check
-    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -62,5 +46,8 @@ jobs:
       - uses: bufbuild/buf-breaking-action@c57b3d842a5c3f3b454756ef65305a50a587c5ba # v1.1.4
         with:
           input: 'proto'
-          # The 'main' branch of the GitHub repository that defines the module.
-          against: 'https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=proto'
+          # Compare against the PR's base branch, not main. This flags only the
+          # breaking changes THIS PR introduces, rather than re-flagging proto
+          # deletions the base branch (duckdb-backend) already carries from the
+          # FrostDB-removal refactor. Falls back to main for merge_group/push.
+          against: "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref || 'main' }},subdir=proto"
