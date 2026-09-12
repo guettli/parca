@@ -51,7 +51,7 @@ ships on an **alpine (musl)** base. That path does **not** work for DuckDB:
 `Dockerfile.duckdb` therefore performs the whole build itself in three stages:
 
 1. **ui-builder** (`node:22-bookworm-slim`): `pnpm install --frozen-lockfile`
-   + `pnpm run build` inside `ui/` (its own pnpm workspace root).
+   - `pnpm run build` inside `ui/` (its own pnpm workspace root).
 2. **go-builder** (`golang:1.26-bookworm`, has gcc/g++ + glibc): copies the
    built UI into `ui/packages/app/web/build`, then
    `CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build ./cmd/parca`. It also
