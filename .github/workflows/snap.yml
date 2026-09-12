@@ -144,7 +144,11 @@ jobs:
     # (localhost:9000) and wait for it to be healthy before the snap is started.
     services:
       clickhouse:
-        image: clickhouse/clickhouse-server:24.8
+        # Parca's schema stores dynamic labels in a `JSON` column. That type is
+        # only experimental in ClickHouse 24.x (CREATE TABLE fails with code 44
+        # unless allow_experimental_json_type=1) and became generally available
+        # in 25.x, so pin an image where the JSON type works out of the box.
+        image: clickhouse/clickhouse-server:25.8
         # The snap runs Parca with its built-in defaults (user "default", empty
         # password, database "parca") and exposes no way to configure ClickHouse
         # credentials. By default the image's entrypoint runs a user-setup step
