@@ -35,7 +35,9 @@ jobs:
   publish-ui-components:
     name: Publish UI components to NPM
     needs: skip-check
-    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
+    # Only the upstream repository publishes UI components to NPM. Forks do not
+    # have the required GH_PAT_UI secret, so gate the job to avoid failing runs.
+    if: ${{ github.repository == 'parca-dev/parca' && needs.skip-check.outputs.should_skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
