@@ -177,8 +177,10 @@ type FlagsClickHouse struct {
 
 // FlagsDuckDB configures the embedded DuckDB storage backend.
 type FlagsDuckDB struct {
-	Path  string `kong:"help='Filesystem path for the DuckDB database file. Empty means an in-memory database (volatile).',default=''"`
-	Table string `kong:"help='DuckDB table name for profile data.',default='stacktraces'"`
+	Path              string        `kong:"help='Filesystem path for the DuckDB database file. Empty means an in-memory database (volatile).',default=''"`
+	Table             string        `kong:"help='DuckDB table name for profile data.',default='stacktraces'"`
+	Retention         time.Duration `kong:"help='Delete profile rows older than this age (e.g. 168h for 7 days). 0 disables retention (keep everything).',default='0'"`
+	RetentionInterval time.Duration `kong:"help='How often the retention deletion runs.',default='1h'"`
 }
 
 // FlagsHidden contains hidden flags intended only for debugging or experimental features.
@@ -364,6 +366,19 @@ func Run(ctx context.Context, logger log.Logger, reg *prometheus.Registry, flags
 			sharedSymbolizer,
 		)
 		closeBackend = ddClient.Close
+
+		// Time-based retention: periodically delete rows older than the
+		// configured age so the DuckDB file's growth is bounded. Cancelled via
+		// closeBackend on shutdown.
+		if flags.DuckDB.Retention > 0 {
+			level.Info(logger).Log("msg", "enabling DuckDB retention", "retention", flags.DuckDB.Retention.String(), "interval", flags.DuckDB.RetentionInterval.String())
+			retentionCtx, cancelRetention := context.WithCancel(ctx)
+			go duckdb.RunRetention(retentionCtx, logger, ddClient, flags.DuckDB.Retention, flags.DuckDB.RetentionInterval)
+			closeBackend = func() error {
+				cancelRetention()
+				return ddClient.Close()
+			}
+		}
 
 	case "clickhouse", "":
 		level.Info(logger).Log("msg", "initializing ClickHouse storage backend", "address", flags.ClickHouse.Address)
@@ -910,4 +925,3 @@ func getDiscoveryConfigs(cfgs []*config.ScrapeConfig) map[string]discovery.Confi
 	}
 	return c
 }
-
