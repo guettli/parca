@@ -184,6 +184,11 @@ Flags:
                                   Empty means an in-memory database (volatile).
       --duckdb-table="stacktraces"
                                   DuckDB table name for profile data.
+      --duckdb-retention=0        Delete profile rows older than this age (e.g.
+                                  168h for 7 days). 0 disables retention (keep
+                                  everything).
+      --duckdb-retention-interval=1h
+                                  How often the retention deletion runs.
 ```
 <!-- prettier-ignore-end -->
 
