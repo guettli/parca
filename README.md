@@ -1,3 +1,13 @@
+> ## This is a fork
+>
+> This fork adds a **single-node, embedded [DuckDB](https://duckdb.org/) storage backend** to Parca (`--storage-backend=duckdb`) — a lightweight alternative to FrostDB for one-box deployments. Profiles live in a single on-disk DuckDB file, queries prune by time window, and an in-process `--duckdb-retention` deletes old data so the file stays bounded.
+>
+> - **The work lives on the [`duckdb-backend`](https://github.com/guettli/parca/tree/duckdb-backend) branch** — this `main` only tracks upstream `parca-dev/parca`.
+> - **Container image:** `ghcr.io/guettli/parca:duckdb` (built from `duckdb-backend`).
+> - **Why:** on a single node, FrostDB query cost scaled with *total* retained data rather than the query window ([frostdb#1006](https://github.com/polarsignals/frostdb/pull/1006)); DuckDB keeps single-node queries fast and frugal. Details: [`docs/duckdb-image.md`](https://github.com/guettli/parca/blob/duckdb-backend/docs/duckdb-image.md).
+
+---
+
 [![Apache 2 License](https://img.shields.io/badge/license-Apache%202-blue.svg)](LICENSE)
 ![Build](https://github.com/parca-dev/parca/actions/workflows/build-test.yml/badge.svg)
 ![Container](https://github.com/parca-dev/parca/actions/workflows/container.yml/badge.svg)
