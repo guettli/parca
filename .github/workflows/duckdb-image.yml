@@ -2,17 +2,17 @@ name: DuckDB image
 
 # Builds the single-node Parca image with the embedded DuckDB storage backend
 # (Dockerfile.duckdb) for linux/amd64, smoke-tests it, and publishes it to
-# ghcr.io/<owner>/parca:duckdb on pushes to the duckdb-backend branch.
+# ghcr.io/<owner>/parca:duckdb on pushes to the main branch.
 #
 # On pull requests the image is only built and smoke-tested (never pushed).
 
 on:
   push:
     branches:
-    - duckdb-backend
+    - main
   pull_request:
     branches:
-    - duckdb-backend
+    - main
   workflow_dispatch:
 
 concurrency:

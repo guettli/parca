@@ -1,27 +1,22 @@
 # Single-node Parca image with the embedded DuckDB backend
 
-The `duckdb-backend` branch adds an embedded [DuckDB](https://duckdb.org/)
-storage backend (`--storage-backend=duckdb`), which keeps all profile data in a
-single on-disk file and prunes by time window — so single-node query latency
-scales with the query window rather than the total retained data.
+This fork replaces Parca's FrostDB storage backend with an embedded
+[DuckDB](https://duckdb.org/) backend (`--storage-backend=duckdb`), which keeps
+all profile data in a single on-disk file and prunes by time window — so
+single-node query latency scales with the query window rather than the total
+retained data. It also adds in-process time-based retention
+(`--duckdb-retention`) so the file stays bounded.
 
 This document describes how the container image for that backend is built and
 the gotchas that make it different from the stock Parca release image.
 
-## Which branch to work from
+## This fork's `main` is the project
 
-**`duckdb-backend` is the canonical branch** for this work. It holds the DuckDB
-backend code *and* its in-process time-based retention (`--duckdb-retention`,
-added in #28). Build, deploy, and base new work on `duckdb-backend`.
-
-Do **not** build or deploy from an image-only side branch on its own. The image
-machinery (`Dockerfile.duckdb` + the workflow) was contributed by an image PR
-that merges *into* `duckdb-backend`; a stale side branch can carry an older
-backend structure and will not compile against current `parca.go`. Always
-rebase such a branch on current `duckdb-backend` before merging.
-
-The deployed image `ghcr.io/guettli/parca:duckdb` (pinned by the `guettli/gitops`
-Parca Deployment) is the one built from `duckdb-backend` HEAD.
+**Work on `main`.** This fork's `main` *is* the DuckDB build — it is not a
+branch staged for an upstream PR, and it does not track upstream unchanged.
+Build, deploy, and base new work on `main`; the deployed image
+`ghcr.io/guettli/parca:duckdb` (pinned by the `guettli/gitops` Parca Deployment)
+is the one built from `main` HEAD.
 
 ## TL;DR
 
@@ -35,7 +30,7 @@ docker run --rm -p 7070:7070 -v parca-data:/data \
 
 The image is built by [`Dockerfile.duckdb`](../Dockerfile.duckdb) and published
 by [`.github/workflows/duckdb-image.yml`](../.github/workflows/duckdb-image.yml)
-on every push to `duckdb-backend` (and on manual `workflow_dispatch`). Pull
+on every push to `main` (and on manual `workflow_dispatch`). Pull
 requests build and smoke-test the image but do not push it.
 
 ## Why a dedicated Dockerfile
