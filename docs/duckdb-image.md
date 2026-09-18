@@ -8,6 +8,21 @@ scales with the query window rather than the total retained data.
 This document describes how the container image for that backend is built and
 the gotchas that make it different from the stock Parca release image.
 
+## Which branch to work from
+
+**`duckdb-backend` is the canonical branch** for this work. It holds the DuckDB
+backend code *and* its in-process time-based retention (`--duckdb-retention`,
+added in #28). Build, deploy, and base new work on `duckdb-backend`.
+
+Do **not** build or deploy from an image-only side branch on its own. The image
+machinery (`Dockerfile.duckdb` + the workflow) was contributed by an image PR
+that merges *into* `duckdb-backend`; a stale side branch can carry an older
+backend structure and will not compile against current `parca.go`. Always
+rebase such a branch on current `duckdb-backend` before merging.
+
+The deployed image `ghcr.io/guettli/parca:duckdb` (pinned by the `guettli/gitops`
+Parca Deployment) is the one built from `duckdb-backend` HEAD.
+
 ## TL;DR
 
 ```console
