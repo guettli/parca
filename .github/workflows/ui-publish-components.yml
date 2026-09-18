@@ -39,7 +39,10 @@ jobs:
   publish-ui-components:
     name: Publish UI components to NPM
     needs: skip-check
-    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
+    # Only publish from the upstream repository. Forks lack the GH_PAT_UI /
+    # NPM publish secrets, so the checkout step would otherwise fail with
+    # "Input required and not supplied: token" on every push to main.
+    if: ${{ needs.skip-check.outputs.should_skip != 'true' && github.repository == 'parca-dev/parca' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
