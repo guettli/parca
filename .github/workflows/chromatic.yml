@@ -50,6 +50,11 @@ jobs:
     if: needs.skip-check.outputs.should_skip != 'true' && !github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # Exposed as an env var so the publish step can be skipped when the
+      # secret is not configured (e.g. on this fork). Secrets cannot be read
+      # directly in step-level `if` conditions, but env vars can.
+      CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
     defaults:
       run:
         working-directory: ./ui
@@ -68,6 +73,9 @@ jobs:
         run: pnpm install --frozen-lockfile --prefer-offline && pnpm run build
         # 👇 Adds Chromatic as a step in the workflow
       - name: Publish to Chromatic
+        # Skip when no project token is configured (e.g. on forks) so the
+        # workflow does not fail with "Missing project token".
+        if: env.CHROMATIC_PROJECT_TOKEN != ''
         uses: chromaui/action@1cfa065cbdab28f6ca3afaeb3d761383076a35aa # v11.29.0
         # Chromatic GitHub Action options
         with:
