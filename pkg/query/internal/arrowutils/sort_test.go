@@ -1,3 +1,16 @@
+// Copyright 2026 The Parca Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package arrowutils
 
 import (
@@ -255,7 +268,7 @@ func TestSortRecordBuilderReuse(t *testing.T) {
 	b1 := array.NewInt64Builder(mem)
 	b1.AppendValues([]int64{3, 2, 1}, nil)
 	arr1 := b1.NewArray()
-	r1 := array.NewRecord(schema, []arrow.Array{arr1}, 3)
+	r1 := array.NewRecordBatch(schema, []arrow.Array{arr1}, 3)
 
 	ms, err := newMultiColSorter(r1, []SortingColumn{{Index: 0}})
 	require.Nil(t, err)
@@ -267,7 +280,7 @@ func TestSortRecordBuilderReuse(t *testing.T) {
 	b2 := array.NewInt64Builder(mem)
 	b2.AppendValues([]int64{2, 1}, nil)
 	arr2 := b2.NewArray()
-	r2 := array.NewRecord(schema, []arrow.Array{arr2}, 2)
+	r2 := array.NewRecordBatch(schema, []arrow.Array{arr2}, 2)
 
 	ms, err = newMultiColSorter(r2, []SortingColumn{{Index: 0}})
 	require.Nil(t, err)
@@ -312,7 +325,7 @@ func TestReorderRecord(t *testing.T) {
 		))
 		defer b.Release()
 		b.Field(0).(*array.Int64Builder).AppendValues([]int64{3, 2, 1}, nil)
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -347,7 +360,7 @@ func TestReorderRecord(t *testing.T) {
 		require.NoError(t, d.AppendString("1"))
 		d.AppendNull()
 		require.NoError(t, d.AppendString("3"))
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -382,7 +395,8 @@ func TestReorderRecord(t *testing.T) {
 						&arrow.DictionaryType{
 							IndexType: arrow.PrimitiveTypes.Uint32,
 							ValueType: arrow.BinaryTypes.String,
-						}),
+						},
+					),
 				},
 			}, nil,
 		))
@@ -394,7 +408,7 @@ func TestReorderRecord(t *testing.T) {
 		require.NoError(t, ree.AppendValueFromString("1"))
 		ree.AppendNull()
 		require.NoError(t, ree.AppendValueFromString("3"))
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -437,7 +451,7 @@ func TestReorderRecord(t *testing.T) {
 		require.NoError(t, d.Append([]byte{0, 1}))
 		d.AppendNull()
 		require.NoError(t, d.Append([]byte{0, 3}))
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -488,7 +502,7 @@ func TestReorderRecord(t *testing.T) {
 		require.NoError(t, vb.AppendString("3"))
 		require.NoError(t, vb.AppendString("3"))
 		require.NoError(t, vb.AppendString("4"))
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -496,7 +510,8 @@ func TestReorderRecord(t *testing.T) {
 		by := indices.NewInt32Array()
 		defer by.Release()
 		result, err := Take(
-			compute.WithAllocator(context.Background(), mem), r, by)
+			compute.WithAllocator(context.Background(), mem), r, by,
+		)
 		require.Nil(t, err)
 		defer result.Release()
 
@@ -568,7 +583,7 @@ func TestReorderRecord(t *testing.T) {
 		require.NoError(t, secondFieldBuilder.AppendValueFromString("5"))
 		thirdFieldBuilder.Append(5)
 
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -622,7 +637,7 @@ func TestReorderRecord(t *testing.T) {
 		int64b.Append(9)
 		uint64b.Append(10)
 
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -652,7 +667,7 @@ func TestReorderRecord(t *testing.T) {
 		defer b.Release()
 		b.Field(0).AppendNulls(5)
 
-		r := b.NewRecord()
+		r := b.NewRecordBatch()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
@@ -681,7 +696,7 @@ type Sample struct {
 
 type Samples []Sample
 
-func (s Samples) Record() arrow.Record {
+func (s Samples) Record() arrow.RecordBatch {
 	b := array.NewRecordBuilder(memory.NewGoAllocator(),
 		arrow.NewSchema([]arrow.Field{
 			{
@@ -748,7 +763,7 @@ func (s Samples) Record() arrow.Record {
 			fNullable.AppendNull()
 		}
 	}
-	return b.NewRecord()
+	return b.NewRecordBatch()
 }
 
 type SortCase struct {
@@ -798,7 +813,7 @@ func BenchmarkTake(b *testing.B) {
 			require.NoError(b, d.AppendString("appearseveryotherrow"))
 			require.NoError(b, d.AppendString(fmt.Sprintf("%d", i)))
 		}
-		r := rb.NewRecord()
+		r := rb.NewRecordBatch()
 		indices := array.NewInt32Builder(mem)
 		for i := r.NumRows() - 1; i > 0; i-- {
 			indices.Append(int32(i))
@@ -839,7 +854,7 @@ func BenchmarkTake(b *testing.B) {
 			require.NoError(b, vb.AppendString("appearseveryrow"))
 		}
 
-		r := listb.NewRecord()
+		r := listb.NewRecordBatch()
 		indices := array.NewInt32Builder(mem)
 		for i := numRows - 1; i > 0; i-- {
 			indices.Append(int32(i))

@@ -1,3 +1,16 @@
+// Copyright 2026 The Parca Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package arrowutils
 
 import (
@@ -12,7 +25,7 @@ import (
 // where the schema is not equal, virtual null columns are inserted in the
 // records with the missing column. When we have static schemas in the execution
 // engine, steps like these should be unnecessary.
-func EnsureSameSchema(records []arrow.Record) ([]arrow.Record, error) {
+func EnsureSameSchema(records []arrow.RecordBatch) ([]arrow.RecordBatch, error) {
 	if len(records) < 2 {
 		return records, nil
 	}
@@ -51,8 +64,8 @@ func EnsureSameSchema(records []arrow.Record) ([]arrow.Record, error) {
 	}
 	mergedSchema := arrow.NewSchema(mergedFields, nil)
 
-	mergedRecords := make([]arrow.Record, len(records))
-	var replacedRecords []arrow.Record
+	mergedRecords := make([]arrow.RecordBatch, len(records))
+	var replacedRecords []arrow.RecordBatch
 
 	for i := range records {
 		recordSchema := records[i].Schema()
@@ -84,7 +97,7 @@ func EnsureSameSchema(records []arrow.Record) ([]arrow.Record, error) {
 		}
 
 		replacedRecords = append(replacedRecords, records[i])
-		mergedRecords[i] = array.NewRecord(mergedSchema, mergedColumns, recordNumRows)
+		mergedRecords[i] = array.NewRecordBatch(mergedSchema, mergedColumns, recordNumRows)
 	}
 
 	for _, r := range replacedRecords {

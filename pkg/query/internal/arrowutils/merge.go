@@ -1,3 +1,16 @@
+// Copyright 2026 The Parca Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package arrowutils
 
 import (
@@ -22,10 +35,10 @@ import (
 // WARNING: Only ascending ordering is currently supported.
 func MergeRecords(
 	mem memory.Allocator,
-	records []arrow.Record,
+	records []arrow.RecordBatch,
 	orderByCols []SortingColumn,
 	limit uint64,
-) (arrow.Record, error) {
+) (arrow.RecordBatch, error) {
 	h := cursorHeap{
 		cursors:     make([]cursor, len(records)),
 		orderByCols: orderByCols,
@@ -68,7 +81,7 @@ func MergeRecords(
 }
 
 type cursor struct {
-	r      arrow.Record
+	r      arrow.RecordBatch
 	curIdx int
 }
 

@@ -12,7 +12,7 @@ the gotchas that make it different from the stock Parca release image.
 
 ## This fork's `main` is the project
 
-**Work on `main`.** This fork's `main` *is* the DuckDB build — it is not a
+**Work on `main`.** This fork's `main` _is_ the DuckDB build — it is not a
 branch staged for an upstream PR, and it does not track upstream unchanged.
 Build, deploy, and base new work on `main`; the deployed image
 `ghcr.io/guettli/parca:duckdb` (pinned by the `guettli/gitops` Parca Deployment)
