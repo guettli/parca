@@ -373,9 +373,14 @@ func Run(ctx context.Context, logger log.Logger, reg *prometheus.Registry, flags
 		if flags.DuckDB.Retention > 0 {
 			level.Info(logger).Log("msg", "enabling DuckDB retention", "retention", flags.DuckDB.Retention.String(), "interval", flags.DuckDB.RetentionInterval.String())
 			retentionCtx, cancelRetention := context.WithCancel(ctx)
-			go duckdb.RunRetention(retentionCtx, logger, ddClient, flags.DuckDB.Retention, flags.DuckDB.RetentionInterval)
+			retentionDone := make(chan struct{})
+			go func() {
+				defer close(retentionDone)
+				duckdb.RunRetention(retentionCtx, logger, ddClient, flags.DuckDB.Retention, flags.DuckDB.RetentionInterval)
+			}()
 			closeBackend = func() error {
 				cancelRetention()
+				<-retentionDone // wait for an in-flight pass before closing the DB
 				return ddClient.Close()
 			}
 		}

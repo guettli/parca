@@ -24,17 +24,14 @@ import (
 
 // DeleteOlderThan removes every profile row whose timestamp is strictly older
 // than cutoffUnixMilli (the same millisecond-since-epoch unit Parca writes into
-// the timestamp column). It returns the number of rows deleted.
-//
-// A CHECKPOINT follows the delete so the write-ahead log is folded back into
-// the database file and the freed pages become reusable by later inserts;
-// DuckDB reuses that space in place, which is what bounds the file's growth
-// rather than shrinking it on disk.
+// the timestamp column), returning the number of rows deleted. It does not
+// checkpoint; callers that want the freed pages folded back into the file
+// should call Checkpoint afterwards.
 func (c *Client) DeleteOlderThan(ctx context.Context, cutoffUnixMilli int64) (int64, error) {
-	// The table name is a trusted config value (not user input), interpolated
-	// the same way the rest of this package builds its statements.
+	// quotedTable quotes the (trusted, config-supplied) table identifier, the
+	// same way every other statement in this package builds it.
 	res, err := c.db.ExecContext(ctx,
-		fmt.Sprintf("DELETE FROM %s WHERE %s < ?", c.cfg.Table, ColTimestamp),
+		fmt.Sprintf("DELETE FROM %s WHERE %s < ?", quotedTable(c), ColTimestamp),
 		cutoffUnixMilli,
 	)
 	if err != nil {
@@ -44,11 +41,17 @@ func (c *Client) DeleteOlderThan(ctx context.Context, cutoffUnixMilli int64) (in
 	if err != nil {
 		return 0, fmt.Errorf("rows affected: %w", err)
 	}
-	if _, err := c.db.ExecContext(ctx, "CHECKPOINT"); err != nil {
-		// Not fatal: the rows are gone; the space just isn't reclaimed yet.
-		return n, fmt.Errorf("checkpoint after delete: %w", err)
-	}
 	return n, nil
+}
+
+// Checkpoint folds the write-ahead log back into the database file so pages
+// freed by deletes become reusable by later inserts. DuckDB reuses that space
+// in place, which bounds the file's growth rather than shrinking it on disk.
+func (c *Client) Checkpoint(ctx context.Context) error {
+	if _, err := c.db.ExecContext(ctx, "CHECKPOINT"); err != nil {
+		return fmt.Errorf("checkpoint: %w", err)
+	}
+	return nil
 }
 
 // RunRetention deletes rows older than retention every interval, until ctx is
@@ -60,6 +63,7 @@ func RunRetention(ctx context.Context, logger log.Logger, c *Client, retention, 
 		return
 	}
 	if interval < time.Minute {
+		level.Warn(logger).Log("msg", "duckdb retention interval clamped to minimum", "requested", interval.String(), "using", time.Minute.String())
 		interval = time.Minute
 	}
 
@@ -71,6 +75,12 @@ func RunRetention(ctx context.Context, logger log.Logger, c *Client, retention, 
 			return
 		}
 		level.Info(logger).Log("msg", "duckdb retention delete", "retention", retention.String(), "cutoff", cutoff.UTC().Format(time.RFC3339), "rows_deleted", n)
+		// A checkpoint failure is not fatal: the rows are already gone, only
+		// the space reclaim is deferred. Report it, but don't treat the pass
+		// as failed.
+		if err := c.Checkpoint(ctx); err != nil {
+			level.Warn(logger).Log("msg", "duckdb retention checkpoint failed", "err", err)
+		}
 	}
 
 	run()
