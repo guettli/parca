@@ -1,0 +1,153 @@
+name: DuckDB image
+
+# Builds the single-node Parca image with the embedded DuckDB storage backend
+# (Dockerfile.duckdb) for linux/amd64, smoke-tests it, and publishes it to
+# ghcr.io/<owner>/parca:duckdb on pushes to the main branch.
+#
+# On pull requests the image is only built and smoke-tested (never pushed).
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/parca
+  TAG: duckdb
+
+jobs:
+  build-smoke-push:
+    name: Build, smoke-test and push
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
+
+      - name: Check out code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Build image (linux/amd64)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile.duckdb
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          build-args: |
+            VERSION=${{ env.TAG }}-${{ github.sha }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — starts, ingests via self-scrape, and answers a query
+        run: |
+          set -euo pipefail
+
+          # Config: filesystem object storage + scrape Parca's own /debug/pprof
+          # endpoints so there is real profile data to query end to end.
+          cat > /tmp/parca-smoke.yaml <<'YAML'
+          object_storage:
+            bucket:
+              type: "FILESYSTEM"
+              config:
+                directory: "/data"
+          scrape_configs:
+            - job_name: "parca"
+              scrape_interval: "5s"
+              static_configs:
+                - targets: [ '127.0.0.1:7070' ]
+          YAML
+
+          docker run -d --name parca-duckdb -p 7070:7070 \
+            -v /tmp/parca-smoke.yaml:/etc/parca/parca.yaml:ro \
+            "${IMAGE}:${TAG}" \
+            --storage-backend=duckdb --duckdb-path=/data/parca.duckdb \
+            --config-path=/etc/parca/parca.yaml
+
+          echo "Waiting for Parca HTTP server on :7070 ..."
+          for i in $(seq 1 60); do
+            if curl -sfL -o /dev/null "http://localhost:7070/"; then
+              echo "server is up"
+              break
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -q '^parca-duckdb$'; then
+              echo "container exited early"; docker logs parca-duckdb; exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Asserting the DuckDB backend was initialized ..."
+          docker logs parca-duckdb 2>&1 | grep -q "initializing DuckDB storage backend"
+
+          echo "Asserting the UI is served ..."
+          curl -sfL "http://localhost:7070/" | grep -qiE 'parca|<body'
+
+          # The JSON/REST API is served by grpc-gateway under /api (native gRPC
+          # lives on the same port over HTTP/2). Hitting the API path directly
+          # returns JSON; an unknown path would fall through to the SPA (HTML).
+          echo "Asserting the query API answers (GET /api/profiles/types returns JSON) ..."
+          types_json=$(curl -sf "http://localhost:7070/api/profiles/types")
+          echo "ProfileTypes: ${types_json}"
+          # A JSON object proves we hit the API; HTML (the SPA fallback) fails jq.
+          echo "${types_json}" | jq -e 'type == "object"' >/dev/null
+
+          echo "Waiting for scraped profile data to be queryable ..."
+          count=0
+          for i in $(seq 1 30); do
+            types_json=$(curl -sf "http://localhost:7070/api/profiles/types" || echo '{}')
+            count=$(echo "${types_json}" | jq '(.types // []) | length')
+            has_data=$(curl -sf "http://localhost:7070/api/profiles/has_profile_data" | jq -r '.hasData // false' || echo false)
+            echo "attempt ${i}: profile types=${count} hasData=${has_data}"
+            if [ "${count:-0}" -gt 0 ]; then break; fi
+            sleep 3
+          done
+
+          echo "--- container logs ---"
+          docker logs parca-duckdb
+
+          if [ "${count:-0}" -le 0 ]; then
+            echo "no profile data became queryable within the timeout"; exit 1
+          fi
+          echo "query returned data (profile types=${count}) OK"
+
+          docker rm -f parca-duckdb
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile.duckdb
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          build-args: |
+            VERSION=${{ env.TAG }}-${{ github.sha }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
