@@ -14,7 +14,9 @@
 package scrape
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -28,6 +30,8 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/pprof/profile"
+	"github.com/klauspost/compress/zstd"
+	"github.com/pierrec/lz4/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	commonconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/version"
@@ -140,21 +144,26 @@ func (sp *scrapePool) DroppedTargets() []*Target {
 // stop terminates all scrape loops and returns after they all terminated.
 func (sp *scrapePool) stop() {
 	sp.cancel()
-	var wg sync.WaitGroup
 
+	// Snapshot loops under the lock, then release before waiting — same
+	// reasoning as sync(): a hung scrape loop must not be able to wedge
+	// other sp.mtx readers (and, transitively, the manager's mtxScrape).
 	sp.mtx.Lock()
-	defer sp.mtx.Unlock()
-
+	toStop := make([]loop, 0, len(sp.loops))
 	for fp, l := range sp.loops {
-		wg.Add(1)
+		toStop = append(toStop, l)
+		delete(sp.loops, fp)
+		delete(sp.activeTargets, fp)
+	}
+	sp.mtx.Unlock()
 
+	var wg sync.WaitGroup
+	for _, l := range toStop {
+		wg.Add(1)
 		go func(l loop) {
 			l.stop()
 			wg.Done()
 		}(l)
-
-		delete(sp.loops, fp)
-		delete(sp.activeTargets, fp)
 	}
 	wg.Wait()
 }
@@ -166,7 +175,6 @@ func (sp *scrapePool) reload(cfg *config.ScrapeConfig) {
 	start := time.Now()
 
 	sp.mtx.Lock()
-	defer sp.mtx.Unlock()
 
 	client, err := commonconfig.NewClientFromConfig(cfg.HTTPClientConfig, cfg.JobName)
 	if err != nil {
@@ -177,27 +185,36 @@ func (sp *scrapePool) reload(cfg *config.ScrapeConfig) {
 	sp.client = client
 
 	var (
-		wg       sync.WaitGroup
 		interval = time.Duration(sp.config.ScrapeInterval)
 		timeout  = time.Duration(sp.config.ScrapeTimeout)
 	)
 
+	// Swap old loops for new under the lock, but don't wait for the old
+	// loops to stop while still holding sp.mtx — same reasoning as sync():
+	// a slow oldLoop.stop() must not wedge other sp.mtx readers (and,
+	// transitively, the manager's mtxScrape).
+	type loopPair struct{ oldLoop, newLoop loop }
+	swaps := make([]loopPair, 0, len(sp.loops))
 	for fp, oldLoop := range sp.loops {
 		var (
 			t       = sp.activeTargets[fp]
 			s       = &targetScraper{Target: t, logger: sp.logger, client: sp.client, timeout: timeout}
 			newLoop = sp.newLoop(t, s)
 		)
-		wg.Add(1)
+		swaps = append(swaps, loopPair{oldLoop: oldLoop, newLoop: newLoop})
+		sp.loops[fp] = newLoop
+	}
+	sp.mtx.Unlock()
 
+	var wg sync.WaitGroup
+	for _, p := range swaps {
+		wg.Add(1)
 		go func(oldLoop, newLoop loop) {
 			oldLoop.stop()
 			wg.Done()
 
 			go newLoop.run(interval, timeout, nil)
-		}(oldLoop, newLoop)
-
-		sp.loops[fp] = newLoop
+		}(p.oldLoop, p.newLoop)
 	}
 
 	wg.Wait()
@@ -352,16 +369,57 @@ func (s *targetScraper) scrape(ctx context.Context, w io.Writer, profileType str
 	case ProfileTraceType:
 		return fmt.Errorf("unimplemented")
 	default:
-		b, err := io.ReadAll(io.TeeReader(resp.Body, w))
-		if err != nil {
+		if err := readProfile(resp.Body, w); err != nil {
 			return fmt.Errorf("failed to read body: %w", err)
-		}
-
-		if len(b) == 0 {
-			return fmt.Errorf("empty %s profile from %s", profileType, s.req.URL.String())
 		}
 	}
 
+	return nil
+}
+
+const maxProfileSize = 100 * 1024 * 1024
+
+func readProfile(r io.Reader, w io.Writer) error {
+	br := bufio.NewReader(r)
+	magic, err := br.Peek(4)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+
+	var profile io.Reader = br
+	var cleanup func()
+	switch {
+	case len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
+		gz, err := gzip.NewReader(br)
+		if err != nil {
+			return err
+		}
+		profile = gz
+		cleanup = func() { _ = gz.Close() }
+	case len(magic) >= 4 && magic[0] == 0x04 && magic[1] == 0x22 && magic[2] == 0x4d && magic[3] == 0x18:
+		profile = lz4.NewReader(br)
+	case len(magic) >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd:
+		decoder, err := zstd.NewReader(br)
+		if err != nil {
+			return err
+		}
+		profile = decoder
+		cleanup = decoder.Close
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	n, err := io.Copy(w, io.LimitReader(profile, maxProfileSize+1))
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errors.New("empty profile")
+	}
+	if n > maxProfileSize {
+		return fmt.Errorf("profile exceeds %d bytes", maxProfileSize)
+	}
 	return nil
 }
 
@@ -470,7 +528,12 @@ mainLoop:
 		cancel()
 
 		if scrapeErr == nil {
-			err := processScrapeResp(buf, sl, profileType)
+			// Bound the write the same way the scrape itself is bounded.
+			// Without this, a slow store.WriteRaw stalls the per-target
+			// loop indefinitely and the target appears to stop scraping.
+			writeCtx, writeCancel := context.WithTimeout(sl.scrapeCtx, timeout)
+			err := processScrapeResp(writeCtx, buf, sl, profileType)
+			writeCancel()
 			if err != nil {
 				if errc != nil {
 					errc <- err
@@ -509,7 +572,7 @@ mainLoop:
 	close(sl.stopped)
 }
 
-func processScrapeResp(buf *bytes.Buffer, sl *scrapeLoop, profileType string) error {
+func processScrapeResp(ctx context.Context, buf *bytes.Buffer, sl *scrapeLoop, profileType string) error {
 	b := buf.Bytes()
 	defer sl.buffers.Put(b)
 	// NOTE: There were issues with misbehaving clients in the past
@@ -586,7 +649,7 @@ func processScrapeResp(buf *bytes.Buffer, sl *scrapeLoop, profileType string) er
 		byt = newBuf.Bytes()
 	}
 
-	_, err = sl.store.WriteRaw(sl.scrapeCtx, &profilepb.WriteRawRequest{
+	_, err = sl.store.WriteRaw(ctx, &profilepb.WriteRawRequest{
 		Normalized: sl.normalizedAddresses,
 		Series: []*profilepb.RawProfileSeries{
 			{
