@@ -82,8 +82,20 @@ ships on an **alpine (musl)** base. That path does **not** work for DuckDB:
 - The image `ENTRYPOINT` is `/parca`; the default `CMD` already selects the
   DuckDB backend (`--storage-backend=duckdb --duckdb-path=/data/parca.duckdb`).
   Extra flags passed to `docker run` are appended to the entrypoint.
+  - **Kubernetes gotcha:** because the entrypoint is `/parca`, a pod's `args:`
+    must be **flags only** — do NOT start them with `/parca`. The stock
+    `parca-dev/parca` image had no such entrypoint, so manifests copied from it
+    often lead with `- /parca`; here that becomes a positional arg and the pod
+    crash-loops with `parca: error: unexpected argument /parca`.
 - The DuckDB file path flag is `--duckdb-path` (there is no `--storage-path`
   flag). An empty `--duckdb-path` uses a volatile in-memory database.
+- **Memory:** DuckDB manages its own (C++) allocations and runs at its default
+  `memory_limit` (a fraction of *detected* host RAM), which a container may see
+  as the whole node, not the cgroup limit. `GOMEMLIMIT` only bounds the Go heap,
+  not DuckDB. Time-based retention plus time-pruned queries keep working sets
+  small, but under a heavy query the pod can exceed its memory limit and be
+  OOMKilled; if that happens, wire a DuckDB `memory_limit` into the backend
+  rather than only raising the limit.
 - `parca.yaml` still configures object storage (used for debuginfo/symbols); it
   defaults to the filesystem bucket under `./data`, which resolves to `/data`
   in the image. Mount a volume at `/data` to persist both the DuckDB file and
