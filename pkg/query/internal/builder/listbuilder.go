@@ -1,13 +1,7 @@
-// Copyright (c) The FrostDB Authors.
-// Licensed under the Apache License 2.0.
-
-// Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements.  See the NOTICE file
-// distributed with this work for additional information
-// regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance
-// with the License.  You may obtain a copy of the License at
+// Copyright 2026 The Parca Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -16,15 +10,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package builder
 
 import (
-	"sync/atomic"
-
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/bitutil"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"go.uber.org/atomic"
 )
 
 const (
@@ -33,7 +27,7 @@ const (
 
 // builder provides common functionality for managing the validity bitmap (nulls) when building arrays.
 type builder struct {
-	refCount   int64
+	refCount   atomic.Int64
 	mem        memory.Allocator
 	nullBitmap *memory.Buffer
 	nulls      int
@@ -160,18 +154,20 @@ type ListBuilder struct {
 }
 
 func NewListBuilder(mem memory.Allocator, etype arrow.DataType) *ListBuilder {
-	return &ListBuilder{
-		builder: builder{refCount: 1, mem: mem},
+	b := &ListBuilder{
+		builder: builder{mem: mem},
 		etype:   etype,
 		values:  NewBuilder(mem, etype),
 		offsets: array.NewInt32Builder(mem),
 	}
+	b.refCount.Store(1)
+	return b
 }
 
 // Release decreases the reference count by 1.
 // When the reference count goes to zero, the memory is freed.
 func (b *ListBuilder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		if b.nullBitmap != nil {
 			b.nullBitmap.Release()
 			b.nullBitmap = nil
@@ -267,7 +263,7 @@ func (b *ListBuilder) NewListArray() (a *array.List) {
 	data := b.newData()
 	a = array.NewListData(data)
 	data.Release()
-	return
+	return a
 }
 
 func (b *ListBuilder) newData() (data *array.Data) {
@@ -293,7 +289,7 @@ func (b *ListBuilder) newData() (data *array.Data) {
 	)
 	b.reset()
 
-	return
+	return data
 }
 
 func (b *ListBuilder) Retain() {

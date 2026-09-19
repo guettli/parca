@@ -1,16 +1,29 @@
+// Copyright 2026 The Parca Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package builder
 
 import (
 	"fmt"
 	"math"
 	"slices"
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/bitutil"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"go.uber.org/atomic"
 )
 
 // ColumnBuilder is a subset of the array.Builder interface implemented by the
@@ -37,7 +50,7 @@ type OptimizedBuilder interface {
 
 type builderBase struct {
 	dtype          arrow.DataType
-	refCount       int64
+	refCount       atomic.Int64
 	length         int
 	validityBitmap []byte
 }
@@ -48,7 +61,7 @@ func (b *builderBase) reset() {
 }
 
 func (b *builderBase) Retain() {
-	atomic.AddInt64(&b.refCount, 1)
+	b.refCount.Add(1)
 }
 
 func (b *builderBase) releaseInternal() {
@@ -57,7 +70,7 @@ func (b *builderBase) releaseInternal() {
 }
 
 func (b *builderBase) Release() {
-	atomic.AddInt64(&b.refCount, -1)
+	b.refCount.Add(-1)
 	b.releaseInternal()
 }
 
@@ -136,7 +149,7 @@ func NewOptBinaryBuilder(dtype arrow.BinaryDataType) *OptBinaryBuilder {
 // When the reference count goes to zero, the memory is freed.
 // Release may be called simultaneously from multiple goroutines.
 func (b *OptBinaryBuilder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		b.data = nil
 		b.offsets = nil
 		b.releaseInternal()
@@ -290,7 +303,7 @@ func (b *OptInt64Builder) resizeData(neededLength int) {
 }
 
 func (b *OptInt64Builder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		b.data = nil
 		b.releaseInternal()
 	}
@@ -396,7 +409,7 @@ func NewOptBooleanBuilder(dtype arrow.DataType) *OptBooleanBuilder {
 }
 
 func (b *OptBooleanBuilder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		b.data = nil
 		b.releaseInternal()
 	}
@@ -520,7 +533,7 @@ func (b *OptInt32Builder) resizeData(neededLength int) {
 }
 
 func (b *OptInt32Builder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		b.data = nil
 		b.releaseInternal()
 	}
@@ -649,7 +662,7 @@ func (b *OptFloat64Builder) resizeData(neededLength int) {
 }
 
 func (b *OptFloat64Builder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		b.data = nil
 		b.releaseInternal()
 	}

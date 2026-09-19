@@ -1,12 +1,25 @@
+// Copyright 2026 The Parca Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package builder
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"go.uber.org/atomic"
 )
 
 // The code in this file is based heavily on Apache arrow's array.RecordBuilder,
@@ -16,7 +29,7 @@ import (
 // RecordBuilder eases the process of building a Record, iteratively, from
 // a known Schema.
 type RecordBuilder struct {
-	refCount int64
+	refCount atomic.Int64
 	mem      memory.Allocator
 	schema   *arrow.Schema
 	fields   []ColumnBuilder
@@ -25,11 +38,11 @@ type RecordBuilder struct {
 // NewRecordBuilder returns a builder, using the provided memory allocator and a schema.
 func NewRecordBuilder(mem memory.Allocator, schema *arrow.Schema) *RecordBuilder {
 	b := &RecordBuilder{
-		refCount: 1,
-		mem:      mem,
-		schema:   schema,
-		fields:   make([]ColumnBuilder, schema.NumFields()),
+		mem:    mem,
+		schema: schema,
+		fields: make([]ColumnBuilder, schema.NumFields()),
 	}
+	b.refCount.Store(1)
 
 	for i := 0; i < schema.NumFields(); i++ {
 		b.fields[i] = NewBuilder(mem, schema.Field(i).Type)
@@ -41,12 +54,12 @@ func NewRecordBuilder(mem memory.Allocator, schema *arrow.Schema) *RecordBuilder
 // Retain increases the reference count by 1.
 // Retain may be called simultaneously from multiple goroutines.
 func (b *RecordBuilder) Retain() {
-	atomic.AddInt64(&b.refCount, 1)
+	b.refCount.Add(1)
 }
 
 // Release decreases the reference count by 1.
 func (b *RecordBuilder) Release() {
-	if atomic.AddInt64(&b.refCount, -1) == 0 {
+	if b.refCount.Add(-1) == 0 {
 		for _, f := range b.fields {
 			f.Release()
 		}
@@ -70,7 +83,7 @@ func (b *RecordBuilder) Reserve(size int) {
 // The returned Record must be Release()'d after use.
 //
 // NewRecord panics if the fields' builder do not have the same length.
-func (b *RecordBuilder) NewRecord() arrow.Record {
+func (b *RecordBuilder) NewRecord() arrow.RecordBatch {
 	cols := make([]arrow.Array, len(b.fields))
 	rows := int64(0)
 
@@ -92,7 +105,7 @@ func (b *RecordBuilder) NewRecord() arrow.Record {
 		rows = irow
 	}
 
-	return array.NewRecord(b.schema, cols, rows)
+	return array.NewRecordBatch(b.schema, cols, rows)
 }
 
 // ExpandSchema expands the record builder schema by adding new fields.
