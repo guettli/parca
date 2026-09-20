@@ -139,18 +139,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Parca's default storage backend is ClickHouse (see snap/parca-wrapper),
-    # so the standalone snap needs a ClickHouse server to talk to. The snap
-    # connects to the default address localhost:9000; expose the service there.
-    # The daemon is configured with restart-condition: never, so ClickHouse must
-    # be ready before `snap start parca` — the health check gates job start.
+    # so the standalone snap needs a ClickHouse server to talk to. Expose it on
+    # the default address localhost:9000 and give the built-in `default` user a
+    # password (this image rejects the empty-password default over the network);
+    # the snap is pointed at these credentials below. The daemon uses
+    # restart-condition: never, so ClickHouse must be ready before
+    # `snap start parca` — the health check gates job start.
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_PASSWORD: parca
         ports:
           - 9000:9000
           - 8123:8123
         options: >-
-          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-cmd "clickhouse-client --password parca --query 'SELECT 1'"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 12
@@ -168,6 +172,9 @@ jobs:
         run: |
           sudo snap install --dangerous dist/parca*_linux_amd64.snap
           sudo snap set parca log-level=debug
+          # Point the snap at the ClickHouse service (see services.clickhouse).
+          # The default user carries the password set via CLICKHOUSE_PASSWORD.
+          sudo snap set parca clickhouse-username=default clickhouse-password=parca
           parca --version
 
       - name: Start Parca - default config

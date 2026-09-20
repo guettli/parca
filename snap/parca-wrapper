@@ -29,6 +29,12 @@ store="$(snapctl get remote-store-address)"
 insecure="$(snapctl get remote-store-insecure)"
 token="$(snapctl get remote-store-bearer-token)"
 
+# ClickHouse connection settings for the profile storage backend.
+clickhouse_address="$(snapctl get clickhouse-address)"
+clickhouse_username="$(snapctl get clickhouse-username)"
+clickhouse_password="$(snapctl get clickhouse-password)"
+clickhouse_database="$(snapctl get clickhouse-database)"
+
 # Start building an array of command line options
 opts=(
     "--config-path=${SNAP_DATA}/parca.yaml"
@@ -68,6 +74,21 @@ else
         opts+=(
             "--enable-persistence=false"
         )
+    fi
+
+    # Point Parca at the ClickHouse server that holds profile data. Only
+    # non-empty options are forwarded so Parca's own defaults still apply.
+    if [ -n "$clickhouse_address" ]; then
+        opts+=("--clickhouse-address=${clickhouse_address}")
+    fi
+    if [ -n "$clickhouse_username" ]; then
+        opts+=("--clickhouse-username=${clickhouse_username}")
+    fi
+    if [ -n "$clickhouse_password" ]; then
+        opts+=("--clickhouse-password=${clickhouse_password}")
+    fi
+    if [ -n "$clickhouse_database" ]; then
+        opts+=("--clickhouse-database=${clickhouse_database}")
     fi
 fi
 
