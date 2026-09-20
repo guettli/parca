@@ -73,8 +73,13 @@ jobs:
 
     - name: Test
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
+      # Cap `go test` parallelism (-p) to keep peak memory below the hosted
+      # runner's limit. The DuckDB storage backend statically links a large
+      # CGO library, so building, linking and running its race-instrumented
+      # test binaries in parallel exhausts the 16 GB runner (the arm64 VM was
+      # being deprovisioned mid-run with "received a shutdown signal", exit 143).
       run: |
-        make test ENABLE_RACE=yes
+        make test ENABLE_RACE=yes GO_TEST_FLAGS="-p 2"
 
     - name: Benchmark
       if: ${{ steps.skip-check.outputs.should_skip != 'true' && matrix.arch == 'amd64' }}

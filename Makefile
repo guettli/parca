@@ -27,6 +27,10 @@ ifeq ($(ENABLE_RACE), yes)
 	SANITIZERS += -race
 endif
 
+# Extra flags passed to `go test`. Empty by default; CI sets this to cap the
+# number of test binaries built/run in parallel (see .github/workflows/build-test.yml).
+GO_TEST_FLAGS ?=
+
 .PHONY: build
 build: ui/build go/bin
 
@@ -92,7 +96,7 @@ check-license:
 
 .PHONY: go/test
 go/test:
-	go test $(SANITIZERS) -tags assert -v `go list ./...`
+	go test $(SANITIZERS) $(GO_TEST_FLAGS) -tags assert -v `go list ./...`
 
 .PHONY: go/bench
 go/bench:
