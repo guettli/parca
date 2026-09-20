@@ -181,6 +181,7 @@ type FlagsDuckDB struct {
 	Table             string        `kong:"help='DuckDB table name for profile data.',default='stacktraces'"`
 	Retention         time.Duration `kong:"help='Delete profile rows older than this age (e.g. 168h for 7 days). 0 disables retention (keep everything).',default='0'"`
 	RetentionInterval time.Duration `kong:"help='How often the retention deletion runs.',default='1h'"`
+	MemoryLimit       string        `kong:"help='Cap DuckDB memory via SET memory_limit (e.g. 3GB, 3GiB, 2500MB). Keeps DuckDB inside the container cgroup limit — by default it sizes to host RAM, not the cgroup, and can be OOMKilled. Empty uses DuckDB default.',default=''"`
 }
 
 // FlagsHidden contains hidden flags intended only for debugging or experimental features.
@@ -344,8 +345,9 @@ func Run(ctx context.Context, logger log.Logger, reg *prometheus.Registry, flags
 		level.Info(logger).Log("msg", "initializing DuckDB storage backend", "path", duckdbPathDescription(flags.DuckDB.Path))
 
 		ddClient, err := duckdb.NewClient(ctx, duckdb.Config{
-			Path:  flags.DuckDB.Path,
-			Table: flags.DuckDB.Table,
+			Path:        flags.DuckDB.Path,
+			Table:       flags.DuckDB.Table,
+			MemoryLimit: flags.DuckDB.MemoryLimit,
 		})
 		if err != nil {
 			level.Error(logger).Log("msg", "failed to open DuckDB", "err", err)
