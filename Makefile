@@ -92,7 +92,7 @@ check-license:
 
 .PHONY: go/test
 go/test:
-	go test $(SANITIZERS) $(GO_TEST_FLAGS) -tags assert -v `go list ./...`
+	go test $(SANITIZERS) -tags assert -v `go list ./...`
 
 .PHONY: go/bench
 go/bench:

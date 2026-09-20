@@ -74,14 +74,8 @@ jobs:
 
     - name: Test
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
-      # Serialize `go test` (-p 1). A cold-cache `-race` build compiles the
-      # cgo-heavy packages (DuckDB, symbolizer) in parallel (-p defaults to the
-      # CPU count), which spikes peak memory beyond what the runner can absorb;
-      # the runner then gets reclaimed mid-run and `make` is killed with SIGTERM
-      # (exit 143, "runner service is stopped"). Runs that hit a warm test cache
-      # skip the parallel compile and pass, which is why the failure is flaky.
       run: |
-        make test ENABLE_RACE=yes GO_TEST_FLAGS='-p 1'
+        make test ENABLE_RACE=yes
 
     - name: Benchmark
       if: ${{ steps.skip-check.outputs.should_skip != 'true' && matrix.arch == 'amd64' }}

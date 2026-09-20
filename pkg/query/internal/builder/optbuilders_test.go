@@ -128,6 +128,14 @@ func Test_BuildLargeArray(t *testing.T) {
 	if testing.Short() {
 		t.Skip("in short mode; skipping long test")
 	}
+	if raceDetectorEnabled {
+		// This test deliberately builds an array larger than MaxInt32 bytes
+		// (~2GiB). Under the race detector the shadow-memory overhead multiplies
+		// that several-fold, which OOMs the CI runner and kills the whole
+		// `go test` process with SIGTERM. The test exercises offset-overflow
+		// handling, not concurrency, so there is nothing for -race to catch.
+		t.Skip("skipping under -race: >2GiB allocation exceeds the race detector's memory budget on CI runners")
+	}
 	alloc := memory.NewGoAllocator()
 	bldr := builder.NewBuilder(alloc, &arrow.BinaryType{})
 
