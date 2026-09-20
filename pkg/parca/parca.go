@@ -180,6 +180,7 @@ type FlagsDuckDB struct {
 	Table             string        `kong:"help='DuckDB table name for profile data.',default='stacktraces'"`
 	Retention         time.Duration `kong:"help='Delete profile rows older than this age (e.g. 168h for 7 days). 0 disables retention (keep everything).',default='0'"`
 	RetentionInterval time.Duration `kong:"help='How often the retention deletion runs.',default='1h'"`
+	MemoryLimit       string        `kong:"help='Cap DuckDB memory via SET memory_limit (e.g. 3GB, 3GiB, 2500MB). Keeps DuckDB inside the container cgroup limit — by default it sizes to host RAM, not the cgroup, and can be OOMKilled. Empty uses DuckDB default.',default=''"`
 }
 
 // FlagsHidden contains hidden flags intended only for debugging or experimental features.
