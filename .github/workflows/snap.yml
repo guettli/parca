@@ -138,6 +138,24 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      # Profile data is stored in ClickHouse, which is Parca's default storage
+      # backend in this fork. The default-config smoke test below starts Parca
+      # with that default, and the snap service uses `restart-condition: never`,
+      # so Parca must be able to connect to ClickHouse on its first attempt.
+      # Provide a health-gated ClickHouse so it's ready before Parca starts.
+      # Parca's default ClickHouse flags (localhost:9000, empty user/password)
+      # match the stock image's `default` user.
+      clickhouse:
+        # renovate: datasource=docker depName=clickhouse/clickhouse-server
+        image: clickhouse/clickhouse-server:24.8
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
