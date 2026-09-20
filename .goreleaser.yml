@@ -8,15 +8,21 @@ builds:
     binary: parca
     # https://goreleaser.com/customization/build/#reproducible-builds
     mod_timestamp: "{{ .CommitTimestamp }}"
+    # The embedded DuckDB storage backend links a static libduckdb through cgo
+    # (github.com/marcboeker/go-duckdb), so ./cmd/parca can no longer be built
+    # CGO-free: with CGO_ENABLED=0 the go-duckdb mapping/bindings files are
+    # excluded and fail to compile ("undefined: bindings.Type"). cgo
+    # cross-compilation to darwin/windows/arm64 is impractical, so the release
+    # builds only the linux/amd64 target the fork actually ships — matching
+    # Dockerfile.duckdb and .github/workflows/duckdb-image.yml.
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos:
       - linux
-      - darwin
-      - windows
     goarch:
       - amd64
-      - arm64
+    tags:
+      - duckdb
     flags:
       - -trimpath
       - -v
@@ -24,7 +30,7 @@ builds:
       # Default is `-s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser`.
       - -X main.version={{.Version}} -X main.commit={{.Commit}}
 archives:
-    # e.g. parca_0.15.0_Darwin_arm64.tar.gz, parca_0.15.0_Darwin_x86_64.tar.gz, parca_0.15.0_Linux_arm64.tar.gz, parca_0.15.0_Linux_x86_64.tar.gz
+    # e.g. parca_0.15.0_Linux_x86_64.tar.gz (only linux/amd64 is built, see above)
   - name_template: >-
       {{ .ProjectName }}_
       {{- trimprefix .Version "v" }}_
