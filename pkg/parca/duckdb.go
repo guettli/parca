@@ -45,8 +45,9 @@ func newDuckDBBackend(
 	level.Info(logger).Log("msg", "initializing DuckDB storage backend", "path", duckdbPathDescription(flags.Path))
 
 	ddClient, err := duckdb.NewClient(ctx, duckdb.Config{
-		Path:  flags.Path,
-		Table: flags.Table,
+		Path:        flags.Path,
+		Table:       flags.Table,
+		MemoryLimit: flags.MemoryLimit,
 	})
 	if err != nil {
 		level.Error(logger).Log("msg", "failed to open DuckDB", "err", err)
