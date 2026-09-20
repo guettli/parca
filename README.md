@@ -184,6 +184,16 @@ Flags:
                                   Empty means an in-memory database (volatile).
       --duckdb-table="stacktraces"
                                   DuckDB table name for profile data.
+      --duckdb-retention=0        Delete profile rows older than this age (e.g.
+                                  168h for 7 days). 0 disables retention (keep
+                                  everything).
+      --duckdb-retention-interval=1h
+                                  How often the retention deletion runs.
+      --duckdb-memory-limit=""    Cap DuckDB memory via SET memory_limit (e.g.
+                                  3GB, 3GiB, 2500MB). Keeps DuckDB inside the
+                                  container cgroup limit — by default it sizes
+                                  to host RAM, not the cgroup, and can be
+                                  OOMKilled. Empty uses DuckDB default.
 ```
 <!-- prettier-ignore-end -->
 

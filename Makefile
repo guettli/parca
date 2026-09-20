@@ -21,6 +21,12 @@ endif
 VERSION ?= $(if $(RELEASE_TAG),$(RELEASE_TAG),$(shell $(CMD_GIT) describe --tags --match='v*' || echo '$(subst /,-,$(BRANCH))$(COMMIT_TIMESTAMP)$(COMMIT_SHORT)'))
 OUT_DOCKER ?= ghcr.io/parca-dev/parca
 
+# The DuckDB storage backend links a static libduckdb through cgo
+# (github.com/marcboeker/go-duckdb), and cgo cross-compilation to arm64 is
+# impractical, so .goreleaser.yml builds only linux/amd64. The container image
+# must match — dist/ has no linux/arm64 binary to copy.
+CONTAINER_PLATFORMS ?= linux/amd64
+
 ENABLE_RACE := no
 
 ifeq ($(ENABLE_RACE), yes)
@@ -161,7 +167,7 @@ container:
 		--annotation "org.opencontainers.image.source=https://github.com/parca-dev/parca" \
 		--annotation "org.opencontainers.image.url=https://github.com/parca-dev/parca" \
 		--annotation "org.opencontainers.image.version=$(VERSION)" \
-		--platform linux/amd64,linux/arm64 \
+		--platform $(CONTAINER_PLATFORMS) \
 		--timestamp 0 \
 		--manifest $(OUT_DOCKER):$(VERSION) .
 
