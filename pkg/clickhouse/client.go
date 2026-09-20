@@ -49,6 +49,13 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 			Username: cfg.Username,
 			Password: cfg.Password,
 		},
+		// Parca stores dynamic labels in a JSON column (see CreateTableSQL). The
+		// JSON type is gated behind an experimental flag on recent ClickHouse
+		// (e.g. 24.8), so enable it on every connection; otherwise schema
+		// creation fails with "experimental JSON type is not allowed".
+		Settings: clickhouse.Settings{
+			"allow_experimental_json_type": 1,
+		},
 	}
 
 	if cfg.Secure {
