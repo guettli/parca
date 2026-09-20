@@ -63,7 +63,6 @@ import (
 	"github.com/parca-dev/parca/pkg/clickhouse"
 	"github.com/parca-dev/parca/pkg/config"
 	"github.com/parca-dev/parca/pkg/debuginfo"
-	"github.com/parca-dev/parca/pkg/duckdb"
 	"github.com/parca-dev/parca/pkg/kv"
 	"github.com/parca-dev/parca/pkg/parcacol"
 	"github.com/parca-dev/parca/pkg/profilestore"
@@ -342,49 +341,13 @@ func Run(ctx context.Context, logger log.Logger, reg *prometheus.Registry, flags
 
 	switch flags.StorageBackend {
 	case "duckdb":
-		level.Info(logger).Log("msg", "initializing DuckDB storage backend", "path", duckdbPathDescription(flags.DuckDB.Path))
-
-		ddClient, err := duckdb.NewClient(ctx, duckdb.Config{
-			Path:        flags.DuckDB.Path,
-			Table:       flags.DuckDB.Table,
-			MemoryLimit: flags.DuckDB.MemoryLimit,
-		})
+		// The DuckDB backend links libduckdb via cgo, so its wiring lives in
+		// backend_duckdb.go (cgo) with a stub in backend_duckdb_stub.go for
+		// CGO-free release builds.
+		var err error
+		profileIngester, querier, closeBackend, err = setupDuckDBBackend(ctx, logger, flags, tracerProvider, sharedSymbolizer)
 		if err != nil {
-			level.Error(logger).Log("msg", "failed to open DuckDB", "err", err)
-			return fmt.Errorf("failed to open DuckDB: %w", err)
-		}
-		if err := ddClient.EnsureSchema(ctx); err != nil {
-			ddClient.Close()
-			level.Error(logger).Log("msg", "failed to ensure DuckDB schema", "err", err)
-			return fmt.Errorf("failed to ensure DuckDB schema: %w", err)
-		}
-
-		profileIngester = duckdb.NewIngester(logger, ddClient)
-		querier = duckdb.NewQuerier(
-			ddClient,
-			logger,
-			tracerProvider.Tracer("duckdb-querier"),
-			memory.DefaultAllocator,
-			sharedSymbolizer,
-		)
-		closeBackend = ddClient.Close
-
-		// Time-based retention: periodically delete rows older than the
-		// configured age so the DuckDB file's growth is bounded. Cancelled via
-		// closeBackend on shutdown.
-		if flags.DuckDB.Retention > 0 {
-			level.Info(logger).Log("msg", "enabling DuckDB retention", "retention", flags.DuckDB.Retention.String(), "interval", flags.DuckDB.RetentionInterval.String())
-			retentionCtx, cancelRetention := context.WithCancel(ctx)
-			retentionDone := make(chan struct{})
-			go func() {
-				defer close(retentionDone)
-				duckdb.RunRetention(retentionCtx, logger, ddClient, flags.DuckDB.Retention, flags.DuckDB.RetentionInterval)
-			}()
-			closeBackend = func() error {
-				cancelRetention()
-				<-retentionDone // wait for an in-flight pass before closing the DB
-				return ddClient.Close()
-			}
+			return err
 		}
 
 	case "clickhouse", "":
@@ -916,13 +879,6 @@ func (t *perRequestBearerToken) GetRequestMetadata(ctx context.Context, uri ...s
 
 func (t *perRequestBearerToken) RequireTransportSecurity() bool {
 	return !t.insecure
-}
-
-func duckdbPathDescription(path string) string {
-	if path == "" {
-		return "in-memory (volatile)"
-	}
-	return path
 }
 
 func getDiscoveryConfigs(cfgs []*config.ScrapeConfig) map[string]discovery.Configs {

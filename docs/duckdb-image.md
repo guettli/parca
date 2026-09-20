@@ -90,7 +90,7 @@ ships on an **alpine (musl)** base. That path does **not** work for DuckDB:
 - The DuckDB file path flag is `--duckdb-path` (there is no `--storage-path`
   flag). An empty `--duckdb-path` uses a volatile in-memory database.
 - **Memory:** DuckDB manages its own (C++) allocations and runs at its default
-  `memory_limit` (a fraction of *detected* host RAM), which a container may see
+  `memory_limit` (a fraction of _detected_ host RAM), which a container may see
   as the whole node, not the cgroup limit. `GOMEMLIMIT` only bounds the Go heap,
   not DuckDB. Time-based retention plus time-pruned queries keep working sets
   small, but under a heavy query the pod can exceed its memory limit and be
