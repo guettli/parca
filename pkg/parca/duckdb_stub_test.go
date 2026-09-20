@@ -32,6 +32,6 @@ func TestNewDuckDBBackendStub(t *testing.T) {
 		t.Fatal("expected an error from the DuckDB stub, got nil")
 	}
 	if ingester != nil || querier != nil || closeBackend != nil {
-		t.Fatalf("expected nil backend components, got ingester=%v querier=%v closeBackend=%v", ingester, querier, closeBackend)
+		t.Fatalf("expected nil backend components, got ingester=%v querier=%v closeBackend!=nil=%t", ingester, querier, closeBackend != nil)
 	}
 }
