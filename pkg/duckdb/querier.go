@@ -65,20 +65,27 @@ func NewQuerier(
 }
 
 // stacktraceLoc mirrors the STRUCT layout of stacktrace[i] in the table.
-// Field tags must match the SQL column names exactly because go-duckdb's
-// Composite scanner uses field names to map STRUCT entries.
+//
+// The tags must be `mapstructure`, not `db`: go-duckdb's Composite scanner
+// decodes with mapstructure.Decode, which reads that tag and otherwise falls
+// back to matching by field name. A snake_case column never matches a
+// CamelCase field, so under `db` tags every field except Address decoded as
+// its zero value. MappingBuildID was therefore always empty -- so no mapping
+// was ever offered to the symbolizer -- and FunctionName was always empty, so
+// even names already stored in the table were dropped. The server reported
+// [unsymbolized] for 100% of its samples and logged nothing.
 type stacktraceLoc struct {
-	Address            uint64 `db:"address"`
-	MappingStart       uint64 `db:"mapping_start"`
-	MappingLimit       uint64 `db:"mapping_limit"`
-	MappingOffset      uint64 `db:"mapping_offset"`
-	MappingFile        string `db:"mapping_file"`
-	MappingBuildID     string `db:"mapping_build_id"`
-	LineNumber         int64  `db:"line_number"`
-	FunctionName       string `db:"function_name"`
-	FunctionSystemName string `db:"function_system_name"`
-	FunctionFilename   string `db:"function_filename"`
-	FunctionStartLine  int64  `db:"function_start_line"`
+	Address            uint64 `mapstructure:"address"`
+	MappingStart       uint64 `mapstructure:"mapping_start"`
+	MappingLimit       uint64 `mapstructure:"mapping_limit"`
+	MappingOffset      uint64 `mapstructure:"mapping_offset"`
+	MappingFile        string `mapstructure:"mapping_file"`
+	MappingBuildID     string `mapstructure:"mapping_build_id"`
+	LineNumber         int64  `mapstructure:"line_number"`
+	FunctionName       string `mapstructure:"function_name"`
+	FunctionSystemName string `mapstructure:"function_system_name"`
+	FunctionFilename   string `mapstructure:"function_filename"`
+	FunctionStartLine  int64  `mapstructure:"function_start_line"`
 }
 
 func quotedTable(c *Client) string { return quoteIdent(c.Table()) }
@@ -441,7 +448,9 @@ func (q *Querier) QuerySingle(
 		SELECT
 			stacktrace,
 			SUM(value)::BIGINT AS value,
-			SUM(duration)::BIGINT AS sample_duration,
+			-- MAX, not SUM: duration is a property of the profile, repeated
+			-- on each of its rows. Summing it multiplies by the row count.
+			MAX(duration)::BIGINT AS sample_duration,
 			period AS sample_period
 		FROM %s
 		WHERE %s
@@ -458,7 +467,7 @@ func (q *Querier) QuerySingle(
 	}
 	sqlQuery += " GROUP BY stacktrace, period"
 
-	records, err := q.runStacktraceQuery(ctx, sqlQuery, args, invertCallStacks)
+	records, period, duration, err := q.runStacktraceQuery(ctx, sqlQuery, args, invertCallStacks)
 	if err != nil {
 		return profile.Profile{}, err
 	}
@@ -467,6 +476,8 @@ func (q *Querier) QuerySingle(
 	}
 
 	qp.Meta.Timestamp = requestedTime
+	qp.Meta.Period = period
+	qp.Meta.Duration = duration
 	return profile.Profile{Meta: qp.Meta, Samples: records}, nil
 }
 
@@ -506,18 +517,16 @@ func (q *Querier) QueryMerge(
 		groupByLabels = ", " + strings.Join(labels, ", ")
 	}
 
-	queryDuration := endNanos - startNanos
-
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			stacktrace,
 			SUM(value)::BIGINT AS value,
-			%d::BIGINT AS sample_duration,
+			MAX(duration)::BIGINT AS sample_duration,
 			period AS sample_period
 		FROM %s
 		WHERE %s
 		  AND time_nanos >= ? AND time_nanos <= ?`,
-		queryDuration, quotedTable(q.client), profileFilter,
+		quotedTable(q.client), profileFilter,
 	)
 
 	args := append([]interface{}{}, profileArgs...)
@@ -530,12 +539,16 @@ func (q *Querier) QueryMerge(
 
 	sqlQuery += " GROUP BY stacktrace, period" + groupByLabels
 
-	records, err := q.runStacktraceQuery(ctx, sqlQuery, args, invertCallStacks)
+	records, period, _, err := q.runStacktraceQuery(ctx, sqlQuery, args, invertCallStacks)
 	if err != nil {
 		return profile.Profile{}, err
 	}
 
 	qp.Meta.Timestamp = startNanos
+	qp.Meta.Period = period
+	// Deliberately no Duration: a merge spans many profiles over the whole
+	// range, so no single one of their durations describes the result. The
+	// ClickHouse backend leaves it unset here too.
 	return profile.Profile{Meta: qp.Meta, Samples: records}, nil
 }
 
@@ -659,10 +672,10 @@ func (q *Querier) runStacktraceQuery(
 	sqlQuery string,
 	args []interface{},
 	invertCallStacks bool,
-) ([]arrow.RecordBatch, error) {
+) (recs []arrow.RecordBatch, period, duration int64, err error) {
 	rows, err := q.client.DB().QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("execute stacktrace query: %w", err)
+		return nil, 0, 0, fmt.Errorf("execute stacktrace query: %w", err)
 	}
 	defer rows.Close()
 
@@ -673,7 +686,10 @@ func (q *Querier) runStacktraceQuery(
 		period   int64
 	}
 
-	var samples []row
+	var (
+		samples      []row
+		mixedPeriods bool
+	)
 	// buildID -> address -> Location, used to deduplicate symbolisation
 	// requests across all rows in this result.
 	locationIndex := make(map[string]map[uint64]*profile.Location)
@@ -682,7 +698,26 @@ func (q *Querier) runStacktraceQuery(
 		var stack duckdb.Composite[[]stacktraceLoc]
 		var r row
 		if err := rows.Scan(&stack, &r.value, &r.duration, &r.period); err != nil {
-			return nil, fmt.Errorf("scan stacktrace row: %w", err)
+			return nil, 0, 0, fmt.Errorf("scan stacktrace row: %w", err)
+		}
+		// The selector names the period *type* but never its value, so Meta
+		// would otherwise carry period 0 -- and a consumer that multiplies
+		// samples by the period to get CPU time would silently read every
+		// profile as a bare count.
+		//
+		// One period has to describe the whole result. If the rows disagree
+		// (targets scraped at different frequencies, or a target that changed
+		// its own), no single value is right, so report none: a consumer that
+		// sees 0 knows it cannot convert, where a wrong period would rescale
+		// part of the profile with no sign anything happened.
+		switch {
+		case period == 0:
+			period = r.period
+		case r.period != 0 && r.period != period:
+			mixedPeriods = true
+		}
+		if r.duration > duration {
+			duration = r.duration
 		}
 		r.stack = stack.Get()
 
@@ -712,7 +747,7 @@ func (q *Querier) runStacktraceQuery(
 		samples = append(samples, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate stacktrace rows: %w", err)
+		return nil, 0, 0, fmt.Errorf("iterate stacktrace rows: %w", err)
 	}
 
 	for buildID, addrMap := range locationIndex {
@@ -732,8 +767,12 @@ func (q *Querier) runStacktraceQuery(
 		}
 	}
 
+	if mixedPeriods {
+		level.Warn(q.logger).Log("msg", "rows carry different sampling periods; reporting none rather than guessing", "period", period)
+		period = 0
+	}
 	if len(samples) == 0 {
-		return nil, nil
+		return nil, 0, 0, nil
 	}
 
 	w := profile.NewWriter(q.mem, []string{})
@@ -776,6 +815,10 @@ func (q *Querier) runStacktraceQuery(
 				for _, line := range sym.Lines {
 					w.Line.Append(true)
 					w.LineNumber.Append(line.Line)
+					// The lines struct has six children. Skipping this one
+					// leaves the column array short of the others and panics
+					// when the record is built.
+					w.ColumnNumber.Append(0)
 					if line.Function != nil {
 						_ = w.FunctionName.Append([]byte(line.Function.Name))
 						_ = w.FunctionSystemName.Append([]byte(line.Function.SystemName))
@@ -792,6 +835,7 @@ func (q *Querier) runStacktraceQuery(
 				w.Lines.Append(true)
 				w.Line.Append(true)
 				w.LineNumber.Append(loc.LineNumber)
+				w.ColumnNumber.Append(0)
 				_ = w.FunctionName.Append([]byte(loc.FunctionName))
 				_ = w.FunctionSystemName.Append([]byte(loc.FunctionSystemName))
 				_ = w.FunctionFilename.Append([]byte(loc.FunctionFilename))
@@ -807,5 +851,5 @@ func (q *Querier) runStacktraceQuery(
 		w.Period.Append(s.period)
 	}
 
-	return []arrow.RecordBatch{w.RecordBuilder.NewRecordBatch()}, nil
+	return []arrow.RecordBatch{w.RecordBuilder.NewRecordBatch()}, period, duration, nil
 }
