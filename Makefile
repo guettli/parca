@@ -91,8 +91,10 @@ check-license:
 	./scripts/check-license.sh
 
 # GO_TEST_FLAGS is empty by default; CI sets it to cap `go test` parallelism
-# (e.g. -p 2) so the DuckDB CGO + -race test binaries don't exhaust the
-# hosted runner's memory and get the job killed with SIGTERM (exit 143).
+# (-p 1) so the DuckDB CGO + -race test binaries are built, linked and run one
+# at a time. Building/running two of these heavyweight binaries concurrently
+# exhausts the hosted runner's memory and gets the job killed with SIGTERM
+# (exit 143); -p 2 still OOMed, so serialise fully.
 GO_TEST_FLAGS ?=
 
 .PHONY: go/test

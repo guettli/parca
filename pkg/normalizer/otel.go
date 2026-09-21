@@ -153,18 +153,18 @@ type profileWriter struct {
 
 	rb *array.RecordBuilder
 
-	duration   *array.Int64Builder
-	name       *array.BinaryDictionaryBuilder
-	period     *array.Int64Builder
-	periodType *array.BinaryDictionaryBuilder
-	periodUnit *array.BinaryDictionaryBuilder
-	sampleType *array.BinaryDictionaryBuilder
-	sampleUnit *array.BinaryDictionaryBuilder
-	stacktrace *array.ListBuilder
+	duration      *array.Int64Builder
+	name          *array.BinaryDictionaryBuilder
+	period        *array.Int64Builder
+	periodType    *array.BinaryDictionaryBuilder
+	periodUnit    *array.BinaryDictionaryBuilder
+	sampleType    *array.BinaryDictionaryBuilder
+	sampleUnit    *array.BinaryDictionaryBuilder
+	stacktrace    *array.ListBuilder
 	stacktraceVal *array.BinaryDictionaryBuilder
-	timestamp  *array.Int64Builder
-	timeNanos  *array.Int64Builder
-	value      *array.Int64Builder
+	timestamp     *array.Int64Builder
+	timeNanos     *array.Int64Builder
+	value         *array.Int64Builder
 
 	// labelBuilders are aligned with labelNames.
 	labelBuilders []*array.BinaryDictionaryBuilder
