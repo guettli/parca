@@ -1002,6 +1002,9 @@ func (q *Querier) rowsToArrowRecords(
 				for _, line := range symbolizedLoc.Lines {
 					w.Line.Append(true)
 					w.LineNumber.Append(line.Line)
+					// Six children in the lines struct. A child left short
+					// of the others panics when the record is built.
+					w.ColumnNumber.Append(0)
 					if line.Function != nil {
 						if err := w.FunctionName.Append([]byte(line.Function.Name)); err != nil {
 							level.Error(q.logger).Log("msg", "failed to append function name", "err", err)
@@ -1025,6 +1028,7 @@ func (q *Querier) rowsToArrowRecords(
 				w.Lines.Append(true)
 				w.Line.Append(true)
 				w.LineNumber.Append(s.lineNumbers[idx])
+				w.ColumnNumber.Append(0)
 				if err := w.FunctionName.Append([]byte(s.functionNames[idx])); err != nil {
 					level.Error(q.logger).Log("msg", "failed to append function name", "err", err)
 				}
