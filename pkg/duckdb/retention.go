@@ -28,6 +28,12 @@ import (
 // checkpoint; callers that want the freed pages folded back into the file
 // should call Checkpoint afterwards.
 func (c *Client) DeleteOlderThan(ctx context.Context, cutoffUnixMilli int64) (int64, error) {
+	release, err := c.LockWrites(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
 	// quotedTable quotes the (trusted, config-supplied) table identifier, the
 	// same way every other statement in this package builds it.
 	res, err := c.db.ExecContext(ctx,
@@ -48,6 +54,15 @@ func (c *Client) DeleteOlderThan(ctx context.Context, cutoffUnixMilli int64) (in
 // freed by deletes become reusable by later inserts. DuckDB reuses that space
 // in place, which bounds the file's growth rather than shrinking it on disk.
 func (c *Client) Checkpoint(ctx context.Context) error {
+	// Exclusive: a non-forced CHECKPOINT refuses to run while any other
+	// connection holds an open write transaction, so wait for the appenders
+	// rather than racing them and reporting a failure that means "busy".
+	release, err := c.LockWritesExclusive(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	if _, err := c.db.ExecContext(ctx, "CHECKPOINT"); err != nil {
 		return fmt.Errorf("checkpoint: %w", err)
 	}
@@ -75,12 +90,23 @@ func RunRetention(ctx context.Context, logger log.Logger, c *Client, retention, 
 			return
 		}
 		level.Info(logger).Log("msg", "duckdb retention delete", "retention", retention.String(), "cutoff", cutoff.UTC().Format(time.RFC3339), "rows_deleted", n)
-		// A checkpoint failure is not fatal: the rows are already gone, only
-		// the space reclaim is deferred. Report it, but don't treat the pass
-		// as failed.
+		// The checkpoint is timed and reported because it is the one statement
+		// here that can hold up writers: it blocks write transactions on every
+		// connection for as long as it runs, whatever the pool size. Its cost
+		// tracks write-ahead log bytes to fold, not database size, so it is
+		// normally milliseconds under DuckDB's own auto-checkpoint threshold --
+		// but "normally" is exactly the assumption an incident disproves, and
+		// without a duration there is nothing to point at afterwards.
+		//
+		// A checkpoint failure is not fatal: the rows are already gone, only the
+		// space reclaim is deferred. Report it, but don't treat the pass as
+		// failed.
+		start := time.Now()
 		if err := c.Checkpoint(ctx); err != nil {
-			level.Warn(logger).Log("msg", "duckdb retention checkpoint failed", "err", err)
+			level.Warn(logger).Log("msg", "duckdb retention checkpoint failed", "err", err, "after", time.Since(start).String())
+			return
 		}
+		level.Info(logger).Log("msg", "duckdb retention checkpoint", "duration", time.Since(start).String())
 	}
 
 	run()
