@@ -21,6 +21,7 @@ import (
 	"regexp"
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
+	"golang.org/x/sync/semaphore"
 )
 
 // Config holds DuckDB connection configuration.
@@ -49,10 +50,32 @@ type Config struct {
 // value is interpolated into a SET statement.
 var memoryLimitRe = regexp.MustCompile(`(?i)^[0-9]+(\.[0-9]+)?\s*(K|M|G|T)i?B$`)
 
-// Client wraps a DuckDB database/sql connection.
+// maxOpenConns bounds the connection pool. It must be more than one.
+//
+// DuckDB runs readers concurrently with writers under MVCC, so a pool of one
+// buys nothing the engine requires -- it only means any single long-running
+// statement holds the process's only connection, and everything else waits.
+// Reads are the ones that run long here: ProfileTypes, Labels, Values and
+// GetProfileMetadataMappings all issue SELECTs with no time predicate, so each
+// is a full scan of a table that grows without bound. While one of those holds
+// the only connection, every agent's write fails at the pool with
+// "acquire duckdb connection", which is what a production server did.
+//
+// A pool does not make writers immune to everything: a CHECKPOINT blocks
+// writers on every connection for as long as it runs, whatever the pool size.
+// It is measurably cheap when there is little write-ahead log to fold, which is
+// the normal case under DuckDB's own 16 MB auto-checkpoint threshold -- but the
+// pool is not what protects ingestion from a checkpoint, and this comment
+// should not be read as claiming it is.
+const maxOpenConns = 4
+
+// Client wraps a DuckDB database/sql connection pool.
 type Client struct {
 	db  *sql.DB
 	cfg Config
+
+	// writeSem admits writers. See LockWrites and LockWritesExclusive.
+	writeSem *semaphore.Weighted
 }
 
 // NewClient opens a DuckDB connection at cfg.Path (file) or in memory if
@@ -83,12 +106,8 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 
 	db := sql.OpenDB(connector)
 
-	// DuckDB is single-writer per process. Pin connection count to 1 so
-	// every Appender / Query lands on the same connection and we don't
-	// race against a transient one. Reads still work fine because the
-	// embedded engine is single-process anyway.
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxOpenConns)
 
 	// Open a connection now so a bad memory_limit or DSN fails at startup
 	// rather than on the first query.
@@ -97,10 +116,40 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}
 
-	return &Client{db: db, cfg: cfg}, nil
+	return &Client{db: db, cfg: cfg, writeSem: semaphore.NewWeighted(maxOpenConns)}, nil
 }
 
-// Close closes the underlying database/sql connection.
+// LockWrites admits one writer, blocking only against an exclusive holder, and
+// returns the function that releases the slot. It honours ctx, so a caller that
+// has run out of time fails instead of queueing past its own deadline.
+//
+// Concurrent appends are deliberately allowed: DuckDB permits several write
+// transactions at once and aborts only those whose row changes conflict, which
+// inserts never do. Measured, eight concurrent appenders to one table land
+// every row without error. So this is not a "one writer at a time" lock.
+//
+// What it exists for is CHECKPOINT. A non-forced checkpoint refuses to run
+// while another connection holds an open write transaction, failing with
+// "Cannot CHECKPOINT: there are other write transactions active". Writers take
+// a slot, the checkpoint takes them all, and that conflict cannot happen.
+func (c *Client) LockWrites(ctx context.Context) (func(), error) {
+	if err := c.writeSem.Acquire(ctx, 1); err != nil {
+		return nil, fmt.Errorf("acquire duckdb write slot: %w", err)
+	}
+	return func() { c.writeSem.Release(1) }, nil
+}
+
+// LockWritesExclusive waits for every in-flight writer to finish and keeps new
+// ones out until the returned function is called. Used by CHECKPOINT; see
+// LockWrites for why.
+func (c *Client) LockWritesExclusive(ctx context.Context) (func(), error) {
+	if err := c.writeSem.Acquire(ctx, maxOpenConns); err != nil {
+		return nil, fmt.Errorf("acquire duckdb write lock: %w", err)
+	}
+	return func() { c.writeSem.Release(maxOpenConns) }, nil
+}
+
+// Close closes the underlying database/sql connections.
 func (c *Client) Close() error { return c.db.Close() }
 
 // DB returns the underlying *sql.DB.

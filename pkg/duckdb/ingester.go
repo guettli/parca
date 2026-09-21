@@ -52,6 +52,15 @@ func (i *Ingester) Ingest(ctx context.Context, record arrow.RecordBatch) error {
 		return nil
 	}
 
+	// Held for the whole append, so a CHECKPOINT cannot start underneath us
+	// and fail on an open write transaction. Several appends may run at once;
+	// see Client.LockWrites.
+	release, err := i.client.LockWrites(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	conn, err := i.client.DB().Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire duckdb connection: %w", err)
