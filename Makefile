@@ -90,9 +90,14 @@ go/lint:
 check-license:
 	./scripts/check-license.sh
 
+# GO_TEST_FLAGS is empty by default; CI sets it to cap `go test` parallelism
+# (e.g. -p 2) so the DuckDB CGO + -race test binaries don't exhaust the
+# hosted runner's memory and get the job killed with SIGTERM (exit 143).
+GO_TEST_FLAGS ?=
+
 .PHONY: go/test
 go/test:
-	go test $(SANITIZERS) -tags assert -v `go list ./...`
+	go test $(SANITIZERS) $(GO_TEST_FLAGS) -tags assert -v `go list ./...`
 
 .PHONY: go/bench
 go/bench:
