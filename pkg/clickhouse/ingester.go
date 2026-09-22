@@ -206,10 +206,30 @@ func decodeLineInfo(data []byte) LineInfo {
 	}
 
 	if numLines > 0 {
-		// Read first line info (we only store one line per location)
+		// Read first line info (we only store one line per location).
+		//
+		// Only the first: Location.line[0] is the innermost inlined function,
+		// which is the right one to keep given a schema with a single function
+		// per location -- but every inlined caller above it is dropped here,
+		// silently.
 		lineNum, n := varint.Uvarint(data[offset:])
 		offset += n
 		info.LineNumber = int64(lineNum)
+
+		// The column. pprof carries none, so the encoder writes a uvarint
+		// zero -- a single 0x00 byte -- and this decoder used not to read it,
+		// taking that byte for the hasFunction flag instead. It is false, so
+		// every function name was discarded, and nothing failed while it
+		// happened: the address, the mapping and the line number all decoded
+		// and the row was stored with a nameless frame.
+		//
+		// Only profiles that arrive already symbolized are affected, which is
+		// anything scraped from a Go /debug/pprof endpoint -- and those are
+		// the ones the symbolizer cannot rescue afterwards, so the result read
+		// like missing debuginfo rather than a decoder that could not parse
+		// what it had been handed.
+		_, n = varint.Uvarint(data[offset:])
+		offset += n
 
 		hasFunction := data[offset] == 0x1
 		offset++
