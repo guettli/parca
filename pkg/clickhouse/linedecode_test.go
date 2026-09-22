@@ -14,6 +14,7 @@
 package clickhouse
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -76,4 +77,77 @@ func TestLocationSurvivesTheRoundTripItIsEncodedFor(t *testing.T) {
 			require.EqualValues(t, wantStart, got.FunctionStartLine)
 		})
 	}
+}
+
+// A short or malformed record must not take the process down. These bytes are
+// server-produced and self-consistent in normal operation, so the realistic
+// way to get a bad one is encoder/decoder drift -- which is exactly what this
+// file exists because of. The ingest path has no recovery interceptor, so a
+// panic here is a dead server, not a failed request: before this was
+// bounds-checked, 43 of the 58 truncations below panicked.
+func TestATruncatedRecordDoesNotPanic(t *testing.T) {
+	strs := []string{"", "pkg.Func", "pkg.Func", "f.go", "build-id", "/bin/svc"}
+	funcs := []*pprofpb.Function{{Id: 1, Name: 1, SystemName: 2, Filename: 3, StartLine: 7}}
+	m := &pprofpb.Mapping{Id: 1, BuildId: 4, Filename: 5, MemoryStart: 0x1000, MemoryLimit: 0x2000, FileOffset: 8}
+	full := profile.EncodePprofLocation(
+		&pprofpb.Location{
+			Id: 1, Address: 0xdeadbeef, MappingId: 1,
+			Line: []*pprofpb.Line{{FunctionId: 1, Line: 42}},
+		},
+		m, funcs, strs)
+
+	for n := 0; n <= len(full); n++ {
+		require.NotPanics(t, func() { decodeLineInfo(full[:n]) },
+			"decoding the first %d of %d bytes panicked", n, len(full))
+	}
+	require.NotPanics(t, func() { decodeLineInfo(nil) })
+	require.NotPanics(t, func() { decodeLineInfo([]byte{}) })
+
+	// A partial record must not invent a confidently-wrong name: a half-read
+	// length prefix must not yield a string.
+	for n := 0; n < len(full); n++ {
+		got := decodeLineInfo(full[:n])
+		if got.FunctionName != "" && got.FunctionName != "pkg.Func" {
+			t.Fatalf("prefix of %d bytes invented a name: %q", n, got.FunctionName)
+		}
+	}
+}
+
+// The innermost inlined frame is kept, the callers above it dropped -- the same
+// behaviour as the DuckDB backend, since both store one line per location.
+func TestOnlyTheInnermostInlinedFrameIsKept(t *testing.T) {
+	strs := []string{"", "inner", "inner", "i.go", "outer", "outer", "o.go"}
+	funcs := []*pprofpb.Function{
+		{Id: 1, Name: 1, SystemName: 2, Filename: 3},
+		{Id: 2, Name: 4, SystemName: 5, Filename: 6},
+	}
+	loc := &pprofpb.Location{Id: 1, Address: 1, Line: []*pprofpb.Line{
+		{FunctionId: 1, Line: 11}, // innermost
+		{FunctionId: 2, Line: 22},
+	}}
+	got := decodeLineInfo(profile.EncodePprofLocation(loc, nil, funcs, strs))
+	require.Equal(t, "inner", got.FunctionName)
+	require.EqualValues(t, 11, got.LineNumber)
+}
+
+// A length prefix larger than the record must not panic. Cast to int, a huge
+// uvarint length goes negative, so offset+int(length) lands below offset and a
+// naive `> len(data)` check waves it through into a slice with low > high. The
+// guard has to compare in unsigned space.
+func TestAnOverflowingLengthPrefixDoesNotPanic(t *testing.T) {
+	var b []byte
+	put := func(v uint64) { b = binary.AppendUvarint(b, v) }
+	put(0)             // address
+	put(1)             // numLines
+	b = append(b, 0x0) // hasMapping = false
+	put(7)             // lineNumber
+	put(0)             // column
+	b = append(b, 0x1) // hasFunction = true
+	put(3)             // startLine
+	put(1<<64 - 1)     // functionName length: enormous, nothing behind it
+
+	require.NotPanics(t, func() {
+		got := decodeLineInfo(b)
+		require.Empty(t, got.FunctionName, "a length with no bytes behind it must not yield a string")
+	})
 }

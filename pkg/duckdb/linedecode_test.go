@@ -14,6 +14,7 @@
 package duckdb
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -161,4 +162,26 @@ func TestOnlyTheInnermostInlinedFrameIsKept(t *testing.T) {
 	got := decodeLineInfo(profile.EncodePprofLocation(loc, nil, funcs, strs))
 	require.Equal(t, "inner", got.FunctionName)
 	require.EqualValues(t, 11, got.LineNumber)
+}
+
+// A length prefix larger than the record must not panic. Cast to int, a huge
+// uvarint length goes negative, so offset+int(length) lands below offset and a
+// naive `> len(data)` check waves it through into a slice with low > high. The
+// guard has to compare in unsigned space.
+func TestAnOverflowingLengthPrefixDoesNotPanic(t *testing.T) {
+	var b []byte
+	put := func(v uint64) { b = binary.AppendUvarint(b, v) }
+	put(0)             // address
+	put(1)             // numLines
+	b = append(b, 0x0) // hasMapping = false
+	put(7)             // lineNumber
+	put(0)             // column
+	b = append(b, 0x1) // hasFunction = true
+	put(3)             // startLine
+	put(1<<64 - 1)     // functionName length: enormous, nothing behind it
+
+	require.NotPanics(t, func() {
+		got := decodeLineInfo(b)
+		require.Empty(t, got.FunctionName, "a length with no bytes behind it must not yield a string")
+	})
 }

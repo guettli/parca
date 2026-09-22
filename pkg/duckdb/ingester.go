@@ -225,7 +225,11 @@ func decodeLineInfo(data []byte) lineInfo {
 	// str reads a length-prefixed string.
 	str := func() (string, bool) {
 		length, ok := uvarint()
-		if !ok || offset+int(length) > len(data) {
+		// Unsigned: a length larger than the record casts to a negative int,
+		// so offset+int(length) can land BELOW offset and slip past a signed
+		// check straight into a panicking slice. Compare against the bytes
+		// that remain, in the same space the length was read in.
+		if !ok || length > uint64(len(data)-offset) {
 			return "", false
 		}
 		v := string(data[offset : offset+int(length)])
