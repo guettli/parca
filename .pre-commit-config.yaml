@@ -16,7 +16,9 @@ repos:
           - --comment-style=//
           - --use-current-year
           - --fuzzy-match-generates-todo
-        exclude: \.pb(?:\.gw)?\.go$
+        # Skip generated protobuf and the pqarrow code vendored under
+        # pkg/query/internal (keeps its upstream license header).
+        exclude: (\.pb(?:\.gw)?\.go$|^pkg/query/internal/(?:builder|arrowutils)/)
         types: [go]
       - id: insert-license
         name: Insert license in comments (Shell)
