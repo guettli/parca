@@ -16,6 +16,7 @@ package duckdb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -249,11 +250,32 @@ func (q *Querier) ProfileTypes(
 
 // HasProfileData returns true if the table has any rows.
 func (q *Querier) HasProfileData(ctx context.Context) (bool, error) {
-	types, err := q.ProfileTypes(ctx, time.UnixMilli(0), time.UnixMilli(0))
-	if err != nil {
-		return false, err
+	// LIMIT 1, not the profile-type list. This answers a yes/no the UI polls,
+	// and it used to answer it with ProfileTypes' unbounded SELECT DISTINCT
+	// over six columns of the whole table -- a full scan of what is, on a real
+	// server, tens of GB, taken to decide whether to show an onboarding
+	// screen. With a single connection that scan held the only connection and
+	// stalled ingestion; the fix in #99 raised the connection count but left
+	// the scan. This removes it: existence needs one row, not every distinct
+	// type in history.
+	var one int
+	err := q.client.DB().QueryRowContext(ctx, hasProfileDataQuery(quotedTable(q.client))).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	return len(types) > 0, nil
+	if err != nil {
+		return false, fmt.Errorf("check for profile data: %w", err)
+	}
+	return true, nil
+}
+
+// hasProfileDataQuery is the existence check HasProfileData runs. Extracted so
+// a test can assert the shape -- LIMIT 1, no DISTINCT -- because the behaviour
+// is identical to the full scan it replaced (both answer the same yes/no), so
+// only the SQL distinguishes the fix from the bug, and a behavioural test
+// cannot see the difference.
+func hasProfileDataQuery(table string) string {
+	return fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", table)
 }
 
 // QueryRange returns time-bucketed metric series for the query.

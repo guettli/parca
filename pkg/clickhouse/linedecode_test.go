@@ -151,3 +151,13 @@ func TestAnOverflowingLengthPrefixDoesNotPanic(t *testing.T) {
 		require.Empty(t, got.FunctionName, "a length with no bytes behind it must not yield a string")
 	})
 }
+
+// The existence check must stay an existence check, not regress to the
+// SELECT DISTINCT scan it replaced. Behaviour is identical either way, so only
+// the SQL distinguishes them.
+func TestHasProfileDataQueryDoesNotScan(t *testing.T) {
+	q := hasProfileDataQuery("db.profiles")
+	require.Contains(t, q, "LIMIT 1", "existence needs one row, not a scan")
+	require.NotContains(t, q, "DISTINCT", "a DISTINCT over the table is the full scan this replaced")
+	require.Contains(t, q, "db.profiles", "must query the given table")
+}

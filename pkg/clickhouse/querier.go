@@ -264,11 +264,29 @@ func (q *Querier) ProfileTypes(
 
 // HasProfileData checks if there is any profile data in the store.
 func (q *Querier) HasProfileData(ctx context.Context) (bool, error) {
-	types, err := q.ProfileTypes(ctx, time.UnixMilli(0), time.UnixMilli(0))
+	// LIMIT 1, not the profile-type list. This answers a yes/no the UI polls,
+	// and it used to answer it with ProfileTypes' unbounded SELECT DISTINCT
+	// over six columns of the whole table -- a full scan taken to decide
+	// whether to show an onboarding screen. Existence needs one row, not every
+	// distinct type in history.
+	rows, err := q.client.Query(ctx, hasProfileDataQuery(q.client.FullTableName()))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to check for profile data: %w", err)
 	}
-	return len(types) > 0, nil
+	defer rows.Close()
+	has := rows.Next()
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("failed to check for profile data: %w", err)
+	}
+	return has, nil
+}
+
+// hasProfileDataQuery is the existence check HasProfileData runs. Extracted so
+// a test can assert the shape -- LIMIT 1, no DISTINCT -- because the behaviour
+// is identical to the full scan it replaced, so only the SQL distinguishes the
+// fix from the bug.
+func hasProfileDataQuery(table string) string {
+	return fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", table)
 }
 
 // QueryRange executes a range query and returns time series data.
