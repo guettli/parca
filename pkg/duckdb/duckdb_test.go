@@ -84,7 +84,11 @@ func buildSampleRecord(t *testing.T, mem memory.Allocator, ts int64) arrow.Recor
 // encodeLocation produces a varint-encoded location blob in the same
 // shape produced by the symbolizer and decoded by the ingester.
 //
-// Layout (matches pkg/profile + pkg/clickhouse decoders):
+// Layout: exactly what profile.EncodePprofLocation writes, which is what both
+// backends' decoders read. It said "matches pkg/profile + pkg/clickhouse
+// decoders" while matching neither -- it had been written from the decoder's
+// reading rather than from the format, so it agreed with the bug it existed to
+// exercise and omitted the column.
 //
 //	addr (uvarint)
 //	numLines (uvarint)
@@ -92,6 +96,7 @@ func buildSampleRecord(t *testing.T, mem memory.Allocator, ts int64) arrow.Recor
 //	  if hasMapping: buildID (len+bytes), filename (len+bytes), 3 zero uvarints
 //	per line:
 //	  lineNumber (uvarint)
+//	  column (uvarint)
 //	  hasFunction byte (0|1)
 //	  if hasFunction: startLine (uvarint), name, systemName, filename (each len+bytes)
 func encodeLocation(addr uint64, buildID, mappingFile, fnName string) []byte {
@@ -106,6 +111,11 @@ func encodeLocation(addr uint64, buildID, mappingFile, fnName string) []byte {
 	out = appendUvarint(out, 0) // mappingOffset
 
 	out = appendUvarint(out, 7) // line number
+	// The column. pprof carries none, so the encoder writes a uvarint zero --
+	// and this helper omitted it, because it was written to match a decoder
+	// that did not read it. A fixture built from the same misreading as the
+	// code cannot catch the misreading.
+	out = appendUvarint(out, 0)
 	out = append(out, 0x01)     // hasFunction
 	out = appendUvarint(out, 1) // startLine
 	out = appendBytes(out, []byte(fnName))

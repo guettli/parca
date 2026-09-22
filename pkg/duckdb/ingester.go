@@ -197,62 +197,120 @@ type lineInfo struct {
 
 // decodeLineInfo decodes the line/function portion of a varint-encoded
 // location record produced by the symbolizer.
+// decodeLineInfo decodes the line/function portion of a varint-encoded
+// location record produced by the symbolizer.
+//
+// Every read is bounds-checked and a short or malformed record returns what
+// was decoded so far rather than panicking. The bytes are server-produced and
+// therefore self-consistent in normal operation, so the realistic way to get a
+// malformed one is encoder/decoder drift -- which is exactly what happened
+// here, and which surfaced as a panic. There is no recovery interceptor on the
+// ingest path, so that panic takes the process down, not the request.
 func decodeLineInfo(data []byte) lineInfo {
 	info := lineInfo{}
+	offset := 0
 
-	_, offset := varint.Uvarint(data)
-
-	numLines, n := varint.Uvarint(data[offset:])
-	offset += n
-
-	hasMapping := data[offset] == 0x1
-	offset++
-
-	if hasMapping {
-		// buildID
-		length, n := varint.Uvarint(data[offset:])
-		offset += n + int(length)
-		// filename
-		length, n = varint.Uvarint(data[offset:])
-		offset += n + int(length)
-		// memoryStart
-		_, n = varint.Uvarint(data[offset:])
+	// uvarint reads one varint, reporting whether there was one to read.
+	uvarint := func() (uint64, bool) {
+		if offset >= len(data) {
+			return 0, false
+		}
+		v, n := varint.Uvarint(data[offset:])
+		if n <= 0 {
+			return 0, false
+		}
 		offset += n
-		// memoryLength
-		_, n = varint.Uvarint(data[offset:])
-		offset += n
-		// mappingOffset
-		_, n = varint.Uvarint(data[offset:])
-		offset += n
+		return v, true
+	}
+	// str reads a length-prefixed string.
+	str := func() (string, bool) {
+		length, ok := uvarint()
+		if !ok || offset+int(length) > len(data) {
+			return "", false
+		}
+		v := string(data[offset : offset+int(length)])
+		offset += int(length)
+		return v, true
+	}
+	// flag reads one byte.
+	flag := func() (bool, bool) {
+		if offset >= len(data) {
+			return false, false
+		}
+		v := data[offset] == 0x1
+		offset++
+		return v, true
 	}
 
-	if numLines > 0 {
-		ln, n := varint.Uvarint(data[offset:])
-		offset += n
-		info.LineNumber = int64(ln)
-
-		hasFunction := data[offset] == 0x1
-		offset++
-		if hasFunction {
-			startLine, n := varint.Uvarint(data[offset:])
-			offset += n
-			info.FunctionStartLine = int64(startLine)
-
-			length, n := varint.Uvarint(data[offset:])
-			offset += n
-			info.FunctionName = string(data[offset : offset+int(length)])
-			offset += int(length)
-
-			length, n = varint.Uvarint(data[offset:])
-			offset += n
-			info.FunctionSystemName = string(data[offset : offset+int(length)])
-			offset += int(length)
-
-			length, n = varint.Uvarint(data[offset:])
-			offset += n
-			info.FunctionFilename = string(data[offset : offset+int(length)])
+	if _, ok := uvarint(); !ok { // address
+		return info
+	}
+	numLines, ok := uvarint()
+	if !ok {
+		return info
+	}
+	hasMapping, ok := flag()
+	if !ok {
+		return info
+	}
+	if hasMapping {
+		if _, ok := str(); !ok { // buildID
+			return info
+		}
+		if _, ok := str(); !ok { // filename
+			return info
+		}
+		// memoryStart, memoryLength, mappingOffset
+		for range 3 {
+			if _, ok := uvarint(); !ok {
+				return info
+			}
 		}
 	}
+
+	if numLines == 0 {
+		return info
+	}
+	// Only the first line. Location.line[0] is the innermost inlined function,
+	// which is the right one to keep given a schema with a single function per
+	// location -- but every inlined caller above it is dropped here, silently.
+	ln, ok := uvarint()
+	if !ok {
+		return info
+	}
+	info.LineNumber = int64(ln)
+
+	// The column. pprof carries none, so the encoder writes a uvarint zero --
+	// a single 0x00 byte -- and this decoder used not to read it, taking that
+	// byte for the hasFunction flag instead. It is false, so every function
+	// name was discarded, and nothing failed while it happened: the address,
+	// the mapping and the line number all decoded and the row was stored with
+	// a nameless frame.
+	//
+	// Only profiles that arrive already symbolized are affected, which is
+	// anything scraped from a Go /debug/pprof endpoint -- and those are the
+	// ones the symbolizer cannot rescue afterwards, so the result read like
+	// missing debuginfo rather than a decoder that could not parse what it had
+	// been handed.
+	if _, ok := uvarint(); !ok {
+		return info
+	}
+	hasFunction, ok := flag()
+	if !ok || !hasFunction {
+		return info
+	}
+	startLine, ok := uvarint()
+	if !ok {
+		return info
+	}
+	info.FunctionStartLine = int64(startLine)
+	if info.FunctionName, ok = str(); !ok {
+		return info
+	}
+	if info.FunctionSystemName, ok = str(); !ok {
+		return info
+	}
+	info.FunctionFilename, _ = str()
 	return info
 }
 
