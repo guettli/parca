@@ -549,4 +549,3 @@ func LabelNamesFromSamples(
 		allLabels[labelName] = struct{}{}
 	}
 }
-

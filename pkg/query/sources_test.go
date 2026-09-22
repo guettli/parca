@@ -42,24 +42,31 @@ type nopQuerier struct{}
 func (nopQuerier) Labels(context.Context, []string, time.Time, time.Time, string) ([]string, error) {
 	return nil, nil
 }
+
 func (nopQuerier) Values(context.Context, string, []string, time.Time, time.Time, string) ([]string, error) {
 	return nil, nil
 }
+
 func (nopQuerier) QueryRange(context.Context, string, time.Time, time.Time, time.Duration, uint32, []string) ([]*pb.MetricsSeries, error) {
 	return nil, nil
 }
+
 func (nopQuerier) ProfileTypes(context.Context, time.Time, time.Time) ([]*pb.ProfileType, error) {
 	return nil, nil
 }
+
 func (nopQuerier) QuerySingle(context.Context, string, time.Time, bool) (profile.Profile, error) {
 	return profile.Profile{}, nil
 }
+
 func (nopQuerier) QueryMerge(context.Context, string, time.Time, time.Time, []string, bool, string) (profile.Profile, error) {
 	return profile.Profile{}, nil
 }
+
 func (nopQuerier) GetProfileMetadataMappings(context.Context, string, time.Time, time.Time) ([]string, error) {
 	return nil, nil
 }
+
 func (nopQuerier) GetProfileMetadataLabels(context.Context, string, time.Time, time.Time) ([]string, error) {
 	return nil, nil
 }
