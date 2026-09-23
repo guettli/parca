@@ -27,8 +27,15 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-latest
+            go_test_flags: ''
           - arch: arm64
             runner: ubuntu-24.04-arm
+            # Cap `go test` package parallelism (-p 1). The `-race` build of
+            # the cgo-heavy packages otherwise spikes peak memory when several
+            # test binaries compile and run at once, which the constrained
+            # arm64 runner cannot absorb; it gets OOM-killed and `go test` dies
+            # with SIGTERM (exit 143).
+            go_test_flags: '-p 1'
     steps:
     - id: skip-check
       uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
@@ -74,7 +81,7 @@ jobs:
     - name: Test
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
       run: |
-        make test ENABLE_RACE=yes
+        make test ENABLE_RACE=yes GO_TEST_FLAGS='${{ matrix.go_test_flags }}'
 
     - name: Benchmark
       if: ${{ steps.skip-check.outputs.should_skip != 'true' && matrix.arch == 'amd64' }}
