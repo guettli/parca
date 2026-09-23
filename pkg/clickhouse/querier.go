@@ -906,13 +906,12 @@ func (q *Querier) rowsToArrowRecords(
 			}
 			addr := s.addresses[i]
 
-			// Check if this location needs symbolization. A v2-ingested profile
-			// carries its symbol in function_system_name with function_name empty
-			// (normalizer.encodeV2Location), so a frame is already symbolised when
-			// either column is set; only symbolize when both are empty.
-			hasName := i < len(s.functionNames) && s.functionNames[i] != ""
-			hasSystemName := i < len(s.functionSystemNames) && s.functionSystemNames[i] != ""
-			needsSymbolization := !hasName && !hasSystemName && buildID != "" && addr != 0
+			// Any frame without a function name that has a build ID is offered to
+			// the symbolizer: uploaded debuginfo yields richer symbols than a v2
+			// profile's stored system-name symbol, so prefer it and fall back to
+			// the system name only when symbolization produces nothing (see the
+			// stored-data arm below).
+			needsSymbolization := (i >= len(s.functionNames) || s.functionNames[i] == "") && buildID != "" && addr != 0
 
 			if needsSymbolization {
 				if _, ok := locationIndex[buildID]; !ok {
@@ -1068,7 +1067,14 @@ func (q *Querier) rowsToArrowRecords(
 				// dropped as unsymbolized.
 				w.Lines.Append(true)
 				w.Line.Append(true)
-				w.LineNumber.Append(s.lineNumbers[idx])
+				// storedFunctionName can now enter this arm via functionSystemNames
+				// at an idx past functionNames; keep the parallel-array read guarded
+				// so a short lineNumbers column cannot panic.
+				var lineNumber int64
+				if idx < len(s.lineNumbers) {
+					lineNumber = s.lineNumbers[idx]
+				}
+				w.LineNumber.Append(lineNumber)
 				w.ColumnNumber.Append(0)
 				if err := w.FunctionName.Append([]byte(storedName)); err != nil {
 					level.Error(q.logger).Log("msg", "failed to append function name", "err", err)

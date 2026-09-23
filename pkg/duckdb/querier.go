@@ -746,11 +746,12 @@ func (q *Querier) runStacktraceQuery(
 		r.stack = stack.Get()
 
 		for _, loc := range r.stack {
-			// A v2-ingested profile carries its symbol in FunctionSystemName
-			// with FunctionName empty (normalizer.encodeV2Location), so a frame
-			// is already symbolised when either column is set. Only send it to
-			// the symbolizer when both are empty.
-			needsSym := loc.FunctionName == "" && loc.FunctionSystemName == "" && loc.MappingBuildID != "" && loc.Address != 0
+			// Any frame without a function name that has a build ID is offered to
+			// the symbolizer: uploaded debuginfo yields richer symbols (demangled
+			// names, inlined caller frames) than a v2 profile's stored system-name
+			// symbol, so we still prefer it here and fall back to the system name
+			// only when symbolization produces nothing (see the writer arm below).
+			needsSym := loc.FunctionName == "" && loc.MappingBuildID != "" && loc.Address != 0
 			if !needsSym {
 				continue
 			}

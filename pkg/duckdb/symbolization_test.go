@@ -77,10 +77,26 @@ func TestQueryEmitsFunctionNames(t *testing.T) {
 	t.Run("name from the system name (v2 profiles)", func(t *testing.T) {
 		names := queryFunctionNames(t, tsMillis, &fakeSymbolizer{name: "should.not.be.used"},
 			func(mem memory.Allocator) arrow.RecordBatch {
-				return buildV2SymbolizedRecord(t, mem, tsMillis)
+				return buildRecordWithLocation(t, mem, tsMillis, encodeV2ShapedLocation(0xf00d, "", "v2.only.systemname"))
 			})
 		require.Contains(t, names, "v2.only.systemname",
 			"a v2 profile's symbol, stored in the system name, never reached the record")
+	})
+
+	// The system-name fallback must not shadow debuginfo. A v2 frame that has a
+	// build ID is still offered to the symbolizer, whose richer output (demangled
+	// names, inlined frames) wins; the stored system name is used only when
+	// symbolization returns nothing. So this frame -- system name set, empty name,
+	// AND a build ID -- must render the symbolizer's name, not "v2.raw.symbol".
+	t.Run("debuginfo still wins over the system name when a build ID is present", func(t *testing.T) {
+		names := queryFunctionNames(t, tsMillis, &fakeSymbolizer{name: "main.fromDebuginfo"},
+			func(mem memory.Allocator) arrow.RecordBatch {
+				return buildRecordWithLocation(t, mem, tsMillis, encodeV2ShapedLocation(0xf00d, "build-id-xyz", "v2.raw.symbol"))
+			})
+		require.Contains(t, names, "main.fromDebuginfo",
+			"a build-ID frame must still be symbolized by debuginfo")
+		require.NotContains(t, names, "v2.raw.symbol",
+			"the raw system name must not shadow the richer debuginfo symbol")
 	})
 }
 
@@ -181,10 +197,9 @@ func buildUnsymbolizedRecord(t *testing.T, mem memory.Allocator, ts int64) arrow
 	return b.NewRecordBatch()
 }
 
-// buildV2SymbolizedRecord is buildSampleRecord with a v2-shaped location: a
-// symbol in the system name, an empty function name, and no mapping -- exactly
-// what normalizer.encodeV2Location stores for an already-symbolized v2 profile.
-func buildV2SymbolizedRecord(t *testing.T, mem memory.Allocator, ts int64) arrow.RecordBatch {
+// buildRecordWithLocation is buildSampleRecord with a caller-supplied encoded
+// location, so a test can pin the exact stored shape it cares about.
+func buildRecordWithLocation(t *testing.T, mem memory.Allocator, ts int64, loc []byte) arrow.RecordBatch {
 	t.Helper()
 
 	schema := profile.BuildArrowSchema([]string{"job"})
@@ -207,7 +222,7 @@ func buildV2SymbolizedRecord(t *testing.T, mem memory.Allocator, ts int64) arrow
 			lb := b.Field(i).(*array.ListBuilder)
 			vb := lb.ValueBuilder().(*array.BinaryDictionaryBuilder)
 			lb.Append(true)
-			require.NoError(t, vb.Append(encodeV2ShapedLocation(0xf00d, "v2.only.systemname")))
+			require.NoError(t, vb.Append(loc))
 		case profile.ColumnTimestamp:
 			b.Field(i).(*array.Int64Builder).Append(ts)
 		case profile.ColumnTimeNanos:
@@ -222,13 +237,24 @@ func buildV2SymbolizedRecord(t *testing.T, mem memory.Allocator, ts int64) arrow
 }
 
 // encodeV2ShapedLocation encodes one line whose function has an empty name and a
-// non-empty system name, with no mapping -- the shape normalizer.encodeV2Location
-// produces (the symbol is written as the system name; the name is "").
-func encodeV2ShapedLocation(addr uint64, systemName string) []byte {
+// non-empty system name -- the shape normalizer.encodeV2Location produces (the
+// symbol is written as the system name; the name is ""). An empty buildID emits
+// no mapping (the frame is never offered to the symbolizer); a non-empty buildID
+// emits a mapping (the frame is offered, and debuginfo is preferred when found).
+func encodeV2ShapedLocation(addr uint64, buildID, systemName string) []byte {
 	var out []byte
 	out = appendUvarint(out, addr)
-	out = appendUvarint(out, 1)                // 1 line
-	out = append(out, 0x00)                    // no mapping
+	out = appendUvarint(out, 1) // 1 line
+	if buildID == "" {
+		out = append(out, 0x00) // no mapping
+	} else {
+		out = append(out, 0x01) // hasMapping
+		out = appendBytes(out, []byte(buildID))
+		out = appendBytes(out, []byte("/lib/test"))
+		out = appendUvarint(out, 0) // memoryStart
+		out = appendUvarint(out, 0) // memoryLength
+		out = appendUvarint(out, 0) // mappingOffset
+	}
 	out = appendUvarint(out, 7)                // line number
 	out = appendUvarint(out, 0)                // column
 	out = append(out, 0x01)                    // hasFunction
