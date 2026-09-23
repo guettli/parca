@@ -842,6 +842,21 @@ type sampleData struct {
 	period              int64
 }
 
+// storedFunctionName returns the display name for the stored function at idx and
+// whether the frame is symbolised at all. It prefers function_name but falls
+// back to function_system_name, because a v2-ingested profile carries its symbol
+// there with function_name empty (normalizer.encodeV2Location). ok is false only
+// when both are empty, in which case the frame has no stored symbol.
+func storedFunctionName(s sampleData, idx int) (string, bool) {
+	if idx < len(s.functionNames) && s.functionNames[idx] != "" {
+		return s.functionNames[idx], true
+	}
+	if idx < len(s.functionSystemNames) && s.functionSystemNames[idx] != "" {
+		return s.functionSystemNames[idx], true
+	}
+	return "", false
+}
+
 // rowsToArrowRecords converts ClickHouse query results to Arrow records.
 func (q *Querier) rowsToArrowRecords(
 	ctx context.Context,
@@ -891,8 +906,13 @@ func (q *Querier) rowsToArrowRecords(
 			}
 			addr := s.addresses[i]
 
-			// Check if this location needs symbolization (no function name but has build ID)
-			needsSymbolization := (i >= len(s.functionNames) || s.functionNames[i] == "") && buildID != "" && addr != 0
+			// Check if this location needs symbolization. A v2-ingested profile
+			// carries its symbol in function_system_name with function_name empty
+			// (normalizer.encodeV2Location), so a frame is already symbolised when
+			// either column is set; only symbolize when both are empty.
+			hasName := i < len(s.functionNames) && s.functionNames[i] != ""
+			hasSystemName := i < len(s.functionSystemNames) && s.functionSystemNames[i] != ""
+			needsSymbolization := !hasName && !hasSystemName && buildID != "" && addr != 0
 
 			if needsSymbolization {
 				if _, ok := locationIndex[buildID]; !ok {
@@ -1041,13 +1061,16 @@ func (q *Querier) rowsToArrowRecords(
 						w.FunctionStartLine.AppendNull()
 					}
 				}
-			} else if idx < len(s.functionNames) && s.functionNames[idx] != "" {
-				// Use stored function data
+			} else if storedName, ok := storedFunctionName(s, idx); ok {
+				// Use stored function data. storedName falls back to the system
+				// name so a v2-ingested frame (symbol in function_system_name,
+				// function_name empty) renders with its symbol instead of being
+				// dropped as unsymbolized.
 				w.Lines.Append(true)
 				w.Line.Append(true)
 				w.LineNumber.Append(s.lineNumbers[idx])
 				w.ColumnNumber.Append(0)
-				if err := w.FunctionName.Append([]byte(s.functionNames[idx])); err != nil {
+				if err := w.FunctionName.Append([]byte(storedName)); err != nil {
 					level.Error(q.logger).Log("msg", "failed to append function name", "err", err)
 				}
 				if idx < len(s.functionSystemNames) {

@@ -746,7 +746,11 @@ func (q *Querier) runStacktraceQuery(
 		r.stack = stack.Get()
 
 		for _, loc := range r.stack {
-			needsSym := loc.FunctionName == "" && loc.MappingBuildID != "" && loc.Address != 0
+			// A v2-ingested profile carries its symbol in FunctionSystemName
+			// with FunctionName empty (normalizer.encodeV2Location), so a frame
+			// is already symbolised when either column is set. Only send it to
+			// the symbolizer when both are empty.
+			needsSym := loc.FunctionName == "" && loc.FunctionSystemName == "" && loc.MappingBuildID != "" && loc.Address != 0
 			if !needsSym {
 				continue
 			}
@@ -855,12 +859,19 @@ func (q *Querier) runStacktraceQuery(
 						w.FunctionStartLine.AppendNull()
 					}
 				}
-			case loc.FunctionName != "":
+			case loc.FunctionName != "" || loc.FunctionSystemName != "":
+				// v2 profiles store the symbol in FunctionSystemName with
+				// FunctionName empty; fall back to it so the frame renders with
+				// its symbol instead of being dropped as unsymbolized.
+				name := loc.FunctionName
+				if name == "" {
+					name = loc.FunctionSystemName
+				}
 				w.Lines.Append(true)
 				w.Line.Append(true)
 				w.LineNumber.Append(loc.LineNumber)
 				w.ColumnNumber.Append(0)
-				_ = w.FunctionName.Append([]byte(loc.FunctionName))
+				_ = w.FunctionName.Append([]byte(name))
 				_ = w.FunctionSystemName.Append([]byte(loc.FunctionSystemName))
 				_ = w.FunctionFilename.Append([]byte(loc.FunctionFilename))
 				w.FunctionStartLine.Append(loc.FunctionStartLine)

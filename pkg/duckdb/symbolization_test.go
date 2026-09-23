@@ -65,6 +65,23 @@ func TestQueryEmitsFunctionNames(t *testing.T) {
 		require.Contains(t, names, "main.symbolized",
 			"the symbolizer's output never reached the record")
 	})
+
+	// A v2-ingested profile stores its symbol in the system name with the
+	// function name empty (normalizer.encodeV2Location), and carries no mapping
+	// build ID, so the querier never offers it to the symbolizer. Before the
+	// fallback the writer's `FunctionName != ""` arm was false and the frame was
+	// dropped as [unsymbolized] -- the symbol sat one column over, in the row but
+	// not in the answer. The symbolizer here would rename any location it were
+	// handed, so a result of "v2.only.systemname" also proves this frame took the
+	// stored arm, not symbolization.
+	t.Run("name from the system name (v2 profiles)", func(t *testing.T) {
+		names := queryFunctionNames(t, tsMillis, &fakeSymbolizer{name: "should.not.be.used"},
+			func(mem memory.Allocator) arrow.RecordBatch {
+				return buildV2SymbolizedRecord(t, mem, tsMillis)
+			})
+		require.Contains(t, names, "v2.only.systemname",
+			"a v2 profile's symbol, stored in the system name, never reached the record")
+	})
 }
 
 // fakeSymbolizer answers every request by naming each location it was given.
@@ -162,6 +179,64 @@ func buildUnsymbolizedRecord(t *testing.T, mem memory.Allocator, ts int64) arrow
 		}
 	}
 	return b.NewRecordBatch()
+}
+
+// buildV2SymbolizedRecord is buildSampleRecord with a v2-shaped location: a
+// symbol in the system name, an empty function name, and no mapping -- exactly
+// what normalizer.encodeV2Location stores for an already-symbolized v2 profile.
+func buildV2SymbolizedRecord(t *testing.T, mem memory.Allocator, ts int64) arrow.RecordBatch {
+	t.Helper()
+
+	schema := profile.BuildArrowSchema([]string{"job"})
+	b := array.NewRecordBuilder(mem, schema)
+	defer b.Release()
+
+	for i, field := range schema.Fields() {
+		switch field.Name {
+		case profile.ColumnDuration:
+			b.Field(i).(*array.Int64Builder).Append(int64(time.Second))
+		case profile.ColumnName:
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("process_cpu"))
+		case profile.ColumnPeriod:
+			b.Field(i).(*array.Int64Builder).Append(10_000_000)
+		case profile.ColumnPeriodType, profile.ColumnSampleType:
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("cpu"))
+		case profile.ColumnPeriodUnit, profile.ColumnSampleUnit:
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("nanoseconds"))
+		case profile.ColumnStacktrace:
+			lb := b.Field(i).(*array.ListBuilder)
+			vb := lb.ValueBuilder().(*array.BinaryDictionaryBuilder)
+			lb.Append(true)
+			require.NoError(t, vb.Append(encodeV2ShapedLocation(0xf00d, "v2.only.systemname")))
+		case profile.ColumnTimestamp:
+			b.Field(i).(*array.Int64Builder).Append(ts)
+		case profile.ColumnTimeNanos:
+			b.Field(i).(*array.Int64Builder).Append(ts * int64(time.Millisecond))
+		case profile.ColumnValue:
+			b.Field(i).(*array.Int64Builder).Append(42)
+		case profile.ColumnLabelsPrefix + "job":
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("test"))
+		}
+	}
+	return b.NewRecordBatch()
+}
+
+// encodeV2ShapedLocation encodes one line whose function has an empty name and a
+// non-empty system name, with no mapping -- the shape normalizer.encodeV2Location
+// produces (the symbol is written as the system name; the name is "").
+func encodeV2ShapedLocation(addr uint64, systemName string) []byte {
+	var out []byte
+	out = appendUvarint(out, addr)
+	out = appendUvarint(out, 1)                // 1 line
+	out = append(out, 0x00)                    // no mapping
+	out = appendUvarint(out, 7)                // line number
+	out = appendUvarint(out, 0)                // column
+	out = append(out, 0x01)                    // hasFunction
+	out = appendUvarint(out, 1)                // startLine
+	out = appendBytes(out, []byte(""))         // name: empty, as v2 stores it
+	out = appendBytes(out, []byte(systemName)) // system name: the real symbol
+	out = appendBytes(out, []byte("main.go"))  // filename
+	return out
 }
 
 // encodeBareLocation is encodeLocation with zero lines: an address inside a
