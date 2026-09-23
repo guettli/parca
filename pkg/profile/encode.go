@@ -359,17 +359,31 @@ func EncodeArrowLocation(
 			offset = writeUint64(buf, offset, 0)
 		}
 
-		buf[offset] = 0x1
-		offset++
+		// The hasFunction flag, and the function block only when there is one.
+		// This MUST mirror serializedArrowLocationSize, which budgets the block
+		// only under the same lineFunctionName.IsValid(i) check: the writer used
+		// to emit the flag as 0x1 and the whole block unconditionally, so a line
+		// with a null function name was written past the end of a buffer sized
+		// for the flag alone -- a panic on the ingest path, which has no
+		// recovery interceptor. A null function is a real, representable shape
+		// (a line with a number but no function, exactly a pprof Line with
+		// FunctionId 0), and the decoders already round-trip the 0x0 case.
+		if lineFunctionName.IsValid(i) {
+			buf[offset] = 0x1
+			offset++
 
-		offset = writeInt64AsUvarint(buf, offset, lineFunctionStartLine.Value(i))
-		offset = writeString(buf, offset, string(lineFunctionNameDict.Value(int(lineFunctionName.GetValueIndex(i)))))
-		offset = writeString(buf, offset, string(lineFunctionSystemNameDict.Value(int(lineFunctionSystemName.GetValueIndex(i)))))
+			offset = writeInt64AsUvarint(buf, offset, lineFunctionStartLine.Value(i))
+			offset = writeString(buf, offset, string(lineFunctionNameDict.Value(int(lineFunctionName.GetValueIndex(i)))))
+			offset = writeString(buf, offset, string(lineFunctionSystemNameDict.Value(int(lineFunctionSystemName.GetValueIndex(i)))))
 
-		if lineFunctionFilenameDict.IsValid(lineFunctionFilename.GetPhysicalIndex(i)) {
-			offset = writeString(buf, offset, string(lineFunctionFilenameDictValues.Value(int(lineFunctionFilenameDict.GetValueIndex(lineFunctionFilename.GetPhysicalIndex(i))))))
+			if lineFunctionFilenameDict.IsValid(lineFunctionFilename.GetPhysicalIndex(i)) {
+				offset = writeString(buf, offset, string(lineFunctionFilenameDictValues.Value(int(lineFunctionFilenameDict.GetValueIndex(lineFunctionFilename.GetPhysicalIndex(i))))))
+			} else {
+				offset = writeString(buf, offset, "")
+			}
 		} else {
-			offset = writeString(buf, offset, "")
+			buf[offset] = 0x0
+			offset++
 		}
 	}
 
