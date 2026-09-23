@@ -10,7 +10,7 @@ ARG TARGETVARIANT=v1
 # renovate: datasource=github-releases depName=grpc-ecosystem/grpc-health-probe
 ARG GRPC_HEALTH_PROBE_VERSION=v0.4.47
 # Downloading grpc_health_probe from github releases with retry as we have seen it fail a lot on ci.
-RUN for i in `seq 1 50`; do \
+RUN for i in $(seq 1 50); do \
     wget -qO/bin/grpc_health_probe "https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-${TARGETOS}-${TARGETARCH}" && \
     chmod +x /bin/grpc_health_probe && \
     break; \
@@ -41,8 +41,8 @@ LABEL \
     org.opencontainers.image.description="Continuous profiling for analysis of CPU and memory usage, down to the line number and throughout time. Saving infrastructure cost, improving performance, and increasing reliability." \
     org.opencontainers.image.licenses="Apache-2.0"
 
-RUN mkdir /data && chown nobody /data
-USER nobody
+RUN mkdir /data && chown 65534 /data
+USER 65534
 
 COPY --chown=0:0 --from=builder /bin/grpc_health_probe /
 COPY --chown=0:0 --from=builder /app/parca /parca
