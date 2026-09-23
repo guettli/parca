@@ -65,6 +65,39 @@ func TestQueryEmitsFunctionNames(t *testing.T) {
 		require.Contains(t, names, "main.symbolized",
 			"the symbolizer's output never reached the record")
 	})
+
+	// A v2-ingested profile stores its symbol in the system name with the
+	// function name empty (normalizer.encodeV2Location), and carries no mapping
+	// build ID, so the querier never offers it to the symbolizer. Before the
+	// fallback the writer's `FunctionName != ""` arm was false and the frame was
+	// dropped as [unsymbolized] -- the symbol sat one column over, in the row but
+	// not in the answer. The symbolizer here would rename any location it were
+	// handed, so a result of "v2.only.systemname" also proves this frame took the
+	// stored arm, not symbolization.
+	t.Run("name from the system name (v2 profiles)", func(t *testing.T) {
+		names := queryFunctionNames(t, tsMillis, &fakeSymbolizer{name: "should.not.be.used"},
+			func(mem memory.Allocator) arrow.RecordBatch {
+				return buildRecordWithLocation(t, mem, tsMillis, encodeV2ShapedLocation(0xf00d, "", "v2.only.systemname"))
+			})
+		require.Contains(t, names, "v2.only.systemname",
+			"a v2 profile's symbol, stored in the system name, never reached the record")
+	})
+
+	// The system-name fallback must not shadow debuginfo. A v2 frame that has a
+	// build ID is still offered to the symbolizer, whose richer output (demangled
+	// names, inlined frames) wins; the stored system name is used only when
+	// symbolization returns nothing. So this frame -- system name set, empty name,
+	// AND a build ID -- must render the symbolizer's name, not "v2.raw.symbol".
+	t.Run("debuginfo still wins over the system name when a build ID is present", func(t *testing.T) {
+		names := queryFunctionNames(t, tsMillis, &fakeSymbolizer{name: "main.fromDebuginfo"},
+			func(mem memory.Allocator) arrow.RecordBatch {
+				return buildRecordWithLocation(t, mem, tsMillis, encodeV2ShapedLocation(0xf00d, "build-id-xyz", "v2.raw.symbol"))
+			})
+		require.Contains(t, names, "main.fromDebuginfo",
+			"a build-ID frame must still be symbolized by debuginfo")
+		require.NotContains(t, names, "v2.raw.symbol",
+			"the raw system name must not shadow the richer debuginfo symbol")
+	})
 }
 
 // fakeSymbolizer answers every request by naming each location it was given.
@@ -162,6 +195,74 @@ func buildUnsymbolizedRecord(t *testing.T, mem memory.Allocator, ts int64) arrow
 		}
 	}
 	return b.NewRecordBatch()
+}
+
+// buildRecordWithLocation is buildSampleRecord with a caller-supplied encoded
+// location, so a test can pin the exact stored shape it cares about.
+func buildRecordWithLocation(t *testing.T, mem memory.Allocator, ts int64, loc []byte) arrow.RecordBatch {
+	t.Helper()
+
+	schema := profile.BuildArrowSchema([]string{"job"})
+	b := array.NewRecordBuilder(mem, schema)
+	defer b.Release()
+
+	for i, field := range schema.Fields() {
+		switch field.Name {
+		case profile.ColumnDuration:
+			b.Field(i).(*array.Int64Builder).Append(int64(time.Second))
+		case profile.ColumnName:
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("process_cpu"))
+		case profile.ColumnPeriod:
+			b.Field(i).(*array.Int64Builder).Append(10_000_000)
+		case profile.ColumnPeriodType, profile.ColumnSampleType:
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("cpu"))
+		case profile.ColumnPeriodUnit, profile.ColumnSampleUnit:
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("nanoseconds"))
+		case profile.ColumnStacktrace:
+			lb := b.Field(i).(*array.ListBuilder)
+			vb := lb.ValueBuilder().(*array.BinaryDictionaryBuilder)
+			lb.Append(true)
+			require.NoError(t, vb.Append(loc))
+		case profile.ColumnTimestamp:
+			b.Field(i).(*array.Int64Builder).Append(ts)
+		case profile.ColumnTimeNanos:
+			b.Field(i).(*array.Int64Builder).Append(ts * int64(time.Millisecond))
+		case profile.ColumnValue:
+			b.Field(i).(*array.Int64Builder).Append(42)
+		case profile.ColumnLabelsPrefix + "job":
+			require.NoError(t, b.Field(i).(*array.BinaryDictionaryBuilder).AppendString("test"))
+		}
+	}
+	return b.NewRecordBatch()
+}
+
+// encodeV2ShapedLocation encodes one line whose function has an empty name and a
+// non-empty system name -- the shape normalizer.encodeV2Location produces (the
+// symbol is written as the system name; the name is ""). An empty buildID emits
+// no mapping (the frame is never offered to the symbolizer); a non-empty buildID
+// emits a mapping (the frame is offered, and debuginfo is preferred when found).
+func encodeV2ShapedLocation(addr uint64, buildID, systemName string) []byte {
+	var out []byte
+	out = appendUvarint(out, addr)
+	out = appendUvarint(out, 1) // 1 line
+	if buildID == "" {
+		out = append(out, 0x00) // no mapping
+	} else {
+		out = append(out, 0x01) // hasMapping
+		out = appendBytes(out, []byte(buildID))
+		out = appendBytes(out, []byte("/lib/test"))
+		out = appendUvarint(out, 0) // memoryStart
+		out = appendUvarint(out, 0) // memoryLength
+		out = appendUvarint(out, 0) // mappingOffset
+	}
+	out = appendUvarint(out, 7)                // line number
+	out = appendUvarint(out, 0)                // column
+	out = append(out, 0x01)                    // hasFunction
+	out = appendUvarint(out, 1)                // startLine
+	out = appendBytes(out, []byte(""))         // name: empty, as v2 stores it
+	out = appendBytes(out, []byte(systemName)) // system name: the real symbol
+	out = appendBytes(out, []byte("main.go"))  // filename
+	return out
 }
 
 // encodeBareLocation is encodeLocation with zero lines: an address inside a

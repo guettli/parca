@@ -746,6 +746,11 @@ func (q *Querier) runStacktraceQuery(
 		r.stack = stack.Get()
 
 		for _, loc := range r.stack {
+			// Any frame without a function name that has a build ID is offered to
+			// the symbolizer: uploaded debuginfo yields richer symbols (demangled
+			// names, inlined caller frames) than a v2 profile's stored system-name
+			// symbol, so we still prefer it here and fall back to the system name
+			// only when symbolization produces nothing (see the writer arm below).
 			needsSym := loc.FunctionName == "" && loc.MappingBuildID != "" && loc.Address != 0
 			if !needsSym {
 				continue
@@ -855,12 +860,19 @@ func (q *Querier) runStacktraceQuery(
 						w.FunctionStartLine.AppendNull()
 					}
 				}
-			case loc.FunctionName != "":
+			case loc.FunctionName != "" || loc.FunctionSystemName != "":
+				// v2 profiles store the symbol in FunctionSystemName with
+				// FunctionName empty; fall back to it so the frame renders with
+				// its symbol instead of being dropped as unsymbolized.
+				name := loc.FunctionName
+				if name == "" {
+					name = loc.FunctionSystemName
+				}
 				w.Lines.Append(true)
 				w.Line.Append(true)
 				w.LineNumber.Append(loc.LineNumber)
 				w.ColumnNumber.Append(0)
-				_ = w.FunctionName.Append([]byte(loc.FunctionName))
+				_ = w.FunctionName.Append([]byte(name))
 				_ = w.FunctionSystemName.Append([]byte(loc.FunctionSystemName))
 				_ = w.FunctionFilename.Append([]byte(loc.FunctionFilename))
 				w.FunctionStartLine.Append(loc.FunctionStartLine)
