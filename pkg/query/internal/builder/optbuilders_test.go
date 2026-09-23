@@ -141,6 +141,14 @@ func Test_BuildLargeArray(t *testing.T) {
 	if testing.Short() {
 		t.Skip("in short mode; skipping long test")
 	}
+	if raceEnabled {
+		// This test drives the builder to the MaxInt32 byte boundary, which
+		// means holding ~2GB of array data. Under the race detector that
+		// footprint multiplies several-fold and exhausts memory on the CI
+		// runners (the arm64 test job is killed mid-run). The overflow guard
+		// this exercises is not concurrency-related, so -race adds no coverage.
+		t.Skip("skipping ~2GB MaxInt32 boundary test under the race detector")
+	}
 	alloc := memory.NewGoAllocator()
 	bldr := builder.NewBuilder(alloc, &arrow.BinaryType{})
 
