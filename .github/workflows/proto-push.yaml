@@ -45,6 +45,8 @@ jobs:
     if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -69,6 +71,10 @@ jobs:
           against: 'https://github.com/${GITHUB_REPOSITORY}.git#branch=main,ref=HEAD~1,subdir=proto'
 
       - uses: bufbuild/buf-push-action@a654ff18effe4641ebea4a4ce242c49800728459 # v1.2.0
+        # Only push to the Buf Schema Registry when a token is configured. Forks
+        # that only track upstream have no BUF_TOKEN, so skip the push there
+        # instead of failing the whole workflow.
+        if: ${{ env.BUF_TOKEN != '' }}
         with:
           input: 'proto'
           buf_token: ${{ secrets.BUF_TOKEN }}
