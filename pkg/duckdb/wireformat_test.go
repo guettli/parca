@@ -51,6 +51,8 @@ func TestDecodeLineInfoMatchesTheCorpus(t *testing.T) {
 				require.Equal(t, want.StartLine, got.FunctionStartLine, "start line")
 			} else {
 				require.Empty(t, got.FunctionName, "a line with no function must decode to an empty name")
+				require.Empty(t, got.FunctionSystemName, "a line with no function must leave the system name empty")
+				require.Empty(t, got.FunctionFilename, "a line with no function must leave the filename empty")
 			}
 		})
 	}

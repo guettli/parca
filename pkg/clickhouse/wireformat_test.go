@@ -21,8 +21,8 @@ import (
 	"github.com/parca-dev/parca/pkg/profile/wiretest"
 )
 
-// This decoder must agree with the canonical encoder, and with the ClickHouse
-// decoder, on the shared corpus. The clickhouse package runs the identical
+// This decoder must agree with the canonical encoder, and with the DuckDB
+// decoder, on the shared corpus. The duckdb package runs the identical
 // assertions against its own decodeLineInfo (wireformat_test.go there), so a
 // drift in either -- a field read in the wrong order, a skipped column, a
 // mishandled null -- fails a test here rather than a production ingest. This is
@@ -51,6 +51,8 @@ func TestDecodeLineInfoMatchesTheCorpus(t *testing.T) {
 				require.Equal(t, want.StartLine, got.FunctionStartLine, "start line")
 			} else {
 				require.Empty(t, got.FunctionName, "a line with no function must decode to an empty name")
+				require.Empty(t, got.FunctionSystemName, "a line with no function must leave the system name empty")
+				require.Empty(t, got.FunctionFilename, "a line with no function must leave the filename empty")
 			}
 		})
 	}

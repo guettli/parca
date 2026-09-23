@@ -25,9 +25,17 @@
 //
 // This corpus is the executable cross-check. It builds records with the
 // canonical encoder (EncodePprofLocation) and states what each must decode to,
-// so a test in every decoder's own package can assert the same expectations
-// against the same bytes. A decoder that drifts from the format -- or from the
-// other decoders -- then fails a test rather than a production ingest.
+// so a decoder's own package can assert the same expectations against the same
+// bytes. A decoder that drifts from the format -- or from the other decoders --
+// then fails a test rather than a production ingest.
+//
+// It is consumed today by the two ingest-path decoders that turn a stored
+// location back into fields, duckdb and clickhouse decodeLineInfo, whose tests
+// live beside them. profile.DecodeInto is the third decoder; it is not wired up
+// here yet because it is a partial Arrow writer (it repopulates a record's field
+// builders rather than returning plain values) and, unlike the two ingest
+// decoders, has no bounds checks -- feeding it the Adversarial cases would need
+// its own guarding first. The corpus is written to serve it when that happens.
 //
 // It is a normal importable package rather than test-only code because the
 // decoders it guards are unexported and in different packages; only _test files
@@ -35,6 +43,8 @@
 package wiretest
 
 import (
+	"math"
+
 	pprofpb "github.com/parca-dev/parca/gen/proto/go/google/pprof"
 	"github.com/parca-dev/parca/pkg/profile"
 )
@@ -188,11 +198,13 @@ func Corpus() []Case {
 
 // Adversarial returns malformed encodings that a decoder must survive without
 // panicking. Truncating a valid record (as the fuzz seeds also do) rarely lands
-// exactly on a string length-prefix, so these craft the specific shapes that
-// crashed the decoders before: a length prefix that claims more bytes than
-// follow, an oversized length, a truncated varint, and a flag byte past the end
-// (#107/#111). Each is a deterministic seed, so a decoder that drops a bounds
-// check fails the fuzz's seed run -- no -fuzz flag needed.
+// exactly on a string length-prefix or a flag byte, so these craft the specific
+// shapes that crashed the decoders before: a length prefix that claims more
+// bytes than follow, an oversized length with bit 63 set (the value that breaks
+// a signed bound), a truncated varint, a flag byte past the end, and a line body
+// that stops early (#107/#111). Each is a deterministic seed, so a decoder that
+// drops or weakens a bounds check fails the fuzz's seed run -- no -fuzz flag
+// needed.
 func Adversarial() [][]byte {
 	var out [][]byte
 
@@ -216,15 +228,35 @@ func Adversarial() [][]byte {
 	// Name length prefix claims 50 bytes; only a few follow.
 	out = append(out, append(append(prefix(), appendUvarint(nil, 50)...), []byte("short")...))
 
-	// Oversized length: a huge uvarint, far past any real buffer -- the int
-	// conversion and the slice bound must both be guarded.
-	out = append(out, append(prefix(), appendUvarint(nil, 1<<62)...))
+	// Oversized length: the length must have bit 63 set, because that is the
+	// value that breaks a signed bound. length > len(data)-offset done in int
+	// space casts such a length to a negative int, so offset+int(length) lands
+	// below offset and slips past the check into a panicking slice -- the exact
+	// #111 regression. 1<<63 is the smallest such value; MaxUint64 is the
+	// largest. (A merely large-but-positive length like 1<<62 does NOT test
+	// this: int(1<<62) is still positive and a signed check handles it.)
+	out = append(out, append(prefix(), appendUvarint(nil, 1<<63)...))
+	out = append(out, append(prefix(), appendUvarint(nil, math.MaxUint64)...))
 
 	// Truncated varint: a length byte with the continuation bit set and no
 	// continuation.
 	out = append(out, append(prefix(), 0x80))
 
-	// hasFunction flag promised (numLines=1) but the whole line body is missing.
+	// A line is promised (numLines=1) but the bytes end right where the
+	// hasFunction flag byte should be -- the flag read must bounds-check, not
+	// index past the end.
+	{
+		var b []byte
+		b = appendUvarint(b, 0) // address
+		b = appendUvarint(b, 1) // numLines
+		b = append(b, 0x0)      // hasMapping = false
+		b = appendUvarint(b, 7) // lineNumber
+		b = appendUvarint(b, 0) // column -- and then nothing: hasFunction is missing
+		out = append(out, b)
+	}
+
+	// numLines is promised but nothing follows at all -- the very first line
+	// read (lineNumber uvarint) is already past the end.
 	{
 		var b []byte
 		b = appendUvarint(b, 0) // address
