@@ -29,19 +29,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # -race is run on arm64 only. A cold `-race` build of the whole module
+          # (stdlib + ~1700 packages, instrumented) exceeds the 16 GB runner and
+          # gets OOM-killed mid-test ("the runner has received a shutdown signal"),
+          # and because the kill happens before setup-go saves the build cache,
+          # every subsequent run is cold again -- a self-sustaining red. Capping
+          # parallelism (-p 2) survived a warm PR run but not a fully cold main
+          # run. arm64 carries the race detector (its runs complete and stay warm);
+          # amd64 runs the same tests without -race, so it always completes cold and
+          # is fast. A data race is arch-independent, so one instrumented arch keeps
+          # the coverage.
           - arch: amd64
             runner: ubuntu-latest
-            # Cap package parallelism: the default (-p = nproc = 4) builds and
-            # runs up to four -race-instrumented packages at once, which spikes
-            # memory past the 16 GB runner on a cold build and gets it OOM-killed
-            # (the runner receives a shutdown signal mid-test). -p 2 roughly halves
-            # the peak so the cold build survives, while staying far faster than a
-            # fully serial -p 1. Once a run completes, setup-go caches the build and
-            # later runs are fast (a warm -race run is ~10 min at any -p).
-            go_test_flags: '-p 2'
+            enable_race: 'no'
           - arch: arm64
             runner: ubuntu-24.04-arm
-            go_test_flags: ''
+            enable_race: 'yes'
     steps:
     - id: skip-check
       uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
@@ -52,6 +55,7 @@ jobs:
           [
             "**.go",
             ".github/workflows/build-test.yml",
+            "Makefile",
             ".go-version",
             ".node-version",
             "go.mod",
@@ -69,7 +73,10 @@ jobs:
       with:
         go-version-file: .go-version
 
+    # Guarded like the others: without this, a skipped run (no checkout) still
+    # ran pnpm setup and failed with "No pnpm version is specified".
     - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
 
     - name: Set up Node.js
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
@@ -87,12 +94,12 @@ jobs:
     - name: Test
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
       run: |
-        make test ENABLE_RACE=yes GO_TEST_FLAGS='${{ matrix.go_test_flags }}'
+        make test ENABLE_RACE=${{ matrix.enable_race }}
 
     - name: Benchmark
       if: ${{ steps.skip-check.outputs.should_skip != 'true' && matrix.arch == 'amd64' }}
       run: |
-        make go/bench GO_TEST_FLAGS='${{ matrix.go_test_flags }}'
+        make go/bench
 
     - name: Archive generated artifacts
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
