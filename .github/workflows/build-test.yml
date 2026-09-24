@@ -33,11 +33,12 @@ jobs:
             runner: ubuntu-latest
             # Cap package parallelism: the default (-p = nproc = 4) builds and
             # runs up to four -race-instrumented packages at once, which spikes
-            # memory past the 16 GB runner and gets it OOM-killed (the runner
-            # receives a shutdown signal mid-test). -p 1 serialises the build so
-            # peak memory stays bounded; once a run completes, setup-go caches the
-            # build and later runs are fast again.
-            go_test_flags: '-p 1'
+            # memory past the 16 GB runner on a cold build and gets it OOM-killed
+            # (the runner receives a shutdown signal mid-test). -p 2 roughly halves
+            # the peak so the cold build survives, while staying far faster than a
+            # fully serial -p 1. Once a run completes, setup-go caches the build and
+            # later runs are fast (a warm -race run is ~10 min at any -p).
+            go_test_flags: '-p 2'
           - arch: arm64
             runner: ubuntu-24.04-arm
             go_test_flags: ''
