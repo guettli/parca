@@ -193,12 +193,30 @@ func (q *ColumnQueryAPI) QueryRange(ctx context.Context, req *pb.QueryRangeReque
 	}, nil
 }
 
+// defaultProfileTypesLookback bounds a ProfileTypes request that arrives with no
+// time range. The querier treats a zero range as "all of history" and runs an
+// unbounded SELECT DISTINCT over the whole table (guettli/parca#119) -- the scan
+// behind the #99 incident, one unset field away. The UI sends a range-less
+// request on some paths (ProfileSelector), so default to a recent window rather
+// than reject: it returns the currently-available types (which are stable, so a
+// recent window captures them) while keeping the scan bounded. True all-time
+// semantics would instead need a set of types materialized at ingest.
+const defaultProfileTypesLookback = 24 * time.Hour
+
 // Types returns the available types of profiles.
 func (q *ColumnQueryAPI) ProfileTypes(ctx context.Context, req *pb.ProfileTypesRequest) (
 	*pb.ProfileTypesResponse,
 	error,
 ) {
-	types, err := q.querier.ProfileTypes(ctx, req.Start.AsTime(), req.End.AsTime())
+	start, end := req.Start.AsTime(), req.End.AsTime()
+	if start.Unix() == 0 && end.Unix() == 0 {
+		// No range given: bound it instead of letting the querier scan the whole
+		// table (see defaultProfileTypesLookback).
+		end = time.Now()
+		start = end.Add(-defaultProfileTypesLookback)
+	}
+
+	types, err := q.querier.ProfileTypes(ctx, start, end)
 	if err != nil {
 		return nil, err
 	}
