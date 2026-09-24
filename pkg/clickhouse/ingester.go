@@ -23,6 +23,8 @@ import (
 	"github.com/dennwc/varint"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/parca-dev/parca/pkg/profile"
 )
@@ -31,13 +33,26 @@ import (
 type Ingester struct {
 	logger log.Logger
 	client *Client
+
+	locationsDecoded     prometheus.Counter
+	inlinedFramesDropped prometheus.Counter
 }
 
-// NewIngester creates a new ClickHouse ingester.
-func NewIngester(logger log.Logger, client *Client) *Ingester {
+// NewIngester creates a new ClickHouse ingester. reg may be nil (metrics are then
+// not registered).
+func NewIngester(logger log.Logger, client *Client, reg prometheus.Registerer) *Ingester {
+	factory := promauto.With(reg)
 	return &Ingester{
 		logger: logger,
 		client: client,
+		locationsDecoded: factory.NewCounter(prometheus.CounterOpts{
+			Name: "parca_ingest_locations_decoded_total",
+			Help: "Total profile-stack locations decoded at ingest.",
+		}),
+		inlinedFramesDropped: factory.NewCounter(prometheus.CounterOpts{
+			Name: "parca_ingest_locations_inlined_dropped_total",
+			Help: "Locations whose inlined caller frames were dropped at ingest (numLines > 1); only the innermost line is stored (guettli/parca#109).",
+		}),
 	}
 }
 
@@ -102,7 +117,7 @@ func (i *Ingester) Ingest(ctx context.Context, record arrow.RecordBatch) error {
 		}
 
 		// Extract stacktrace data
-		stacktraceData := extractStacktraceData(record, stacktraceIdx, row)
+		stacktraceData := i.extractStacktraceData(record, stacktraceIdx, row)
 
 		// Append to batch
 		err := batch.Append(
@@ -164,6 +179,10 @@ type LineInfo struct {
 	FunctionName       string
 	FunctionSystemName string
 	FunctionFilename   string
+	// NumLines is how many lines the location carried. Only line[0] is decoded
+	// into the fields above; NumLines > 1 means inlined callers were dropped
+	// (guettli/parca#109). It is exposed so ingest can count the loss.
+	NumLines int64
 }
 
 // decodeLineInfo decodes line and function information from the encoded location data.
@@ -220,6 +239,7 @@ func decodeLineInfo(data []byte) LineInfo {
 	if !ok {
 		return info
 	}
+	info.NumLines = int64(numLines)
 	hasMapping, ok := flag()
 	if !ok {
 		return info
@@ -278,7 +298,7 @@ func decodeLineInfo(data []byte) LineInfo {
 
 // extractStacktraceData extracts stacktrace information from the encoded binary column.
 // The stacktrace column contains encoded location data that needs to be decoded.
-func extractStacktraceData(record arrow.RecordBatch, colIdx, row int) StacktraceData {
+func (i *Ingester) extractStacktraceData(record arrow.RecordBatch, colIdx, row int) StacktraceData {
 	data := StacktraceData{
 		Addresses:           []uint64{},
 		MappingStarts:       []uint64{},
@@ -340,6 +360,14 @@ func extractStacktraceData(record arrow.RecordBatch, colIdx, row int) Stacktrace
 
 		// Decode line/function info
 		lineInfo := decodeLineInfo(encodedLocation)
+		if i.locationsDecoded != nil {
+			i.locationsDecoded.Inc()
+			if lineInfo.NumLines > 1 {
+				// Inlined caller frames were dropped here; only line[0] is stored
+				// (guettli/parca#109).
+				i.inlinedFramesDropped.Inc()
+			}
+		}
 		data.LineNumbers = append(data.LineNumbers, lineInfo.LineNumber)
 		data.FunctionNames = append(data.FunctionNames, lineInfo.FunctionName)
 		data.FunctionSystemNames = append(data.FunctionSystemNames, lineInfo.FunctionSystemName)

@@ -27,6 +27,8 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/parca-dev/parca/pkg/profile"
 )
@@ -35,11 +37,27 @@ import (
 type Ingester struct {
 	logger log.Logger
 	client *Client
+
+	locationsDecoded     prometheus.Counter
+	inlinedFramesDropped prometheus.Counter
 }
 
-// NewIngester returns an Ingester bound to client.
-func NewIngester(logger log.Logger, client *Client) *Ingester {
-	return &Ingester{logger: logger, client: client}
+// NewIngester returns an Ingester bound to client. reg may be nil (metrics are
+// then not registered).
+func NewIngester(logger log.Logger, client *Client, reg prometheus.Registerer) *Ingester {
+	factory := promauto.With(reg)
+	return &Ingester{
+		logger: logger,
+		client: client,
+		locationsDecoded: factory.NewCounter(prometheus.CounterOpts{
+			Name: "parca_ingest_locations_decoded_total",
+			Help: "Total profile-stack locations decoded at ingest.",
+		}),
+		inlinedFramesDropped: factory.NewCounter(prometheus.CounterOpts{
+			Name: "parca_ingest_locations_inlined_dropped_total",
+			Help: "Locations whose inlined caller frames were dropped at ingest (numLines > 1); only the innermost line is stored (guettli/parca#109).",
+		}),
+	}
 }
 
 // Ingest writes record into the configured DuckDB table.
@@ -112,7 +130,7 @@ func (i *Ingester) Ingest(ctx context.Context, record arrow.RecordBatch) error {
 			}
 		}
 
-		st := buildStacktraceList(record, stacktraceIdx, row)
+		st := i.buildStacktraceList(record, stacktraceIdx, row)
 
 		err := appender.AppendRow(
 			getStringValue(record, nameIdx, row),
@@ -143,7 +161,7 @@ func (i *Ingester) Ingest(ctx context.Context, record arrow.RecordBatch) error {
 // buildStacktraceList decodes the encoded location blobs in record's
 // stacktrace LIST column at row and produces the slice form the duckdb
 // Appender expects for a LIST(STRUCT(...)) column.
-func buildStacktraceList(record arrow.RecordBatch, colIdx, row int) []map[string]any {
+func (i *Ingester) buildStacktraceList(record arrow.RecordBatch, colIdx, row int) []map[string]any {
 	if colIdx < 0 {
 		return nil
 	}
@@ -171,6 +189,14 @@ func buildStacktraceList(record arrow.RecordBatch, colIdx, row int) []map[string
 		raw := bin.Value(dictCol.GetValueIndex(idx))
 		sym, _ := profile.DecodeSymbolizationInfo(raw)
 		line := decodeLineInfo(raw)
+		if i.locationsDecoded != nil {
+			i.locationsDecoded.Inc()
+			if line.NumLines > 1 {
+				// Inlined caller frames were dropped here; only line[0] is stored
+				// (guettli/parca#109).
+				i.inlinedFramesDropped.Inc()
+			}
+		}
 		out = append(out, map[string]any{
 			StFieldAddress:            sym.Addr,
 			StFieldMappingStart:       sym.Mapping.StartAddr,
@@ -195,6 +221,10 @@ type lineInfo struct {
 	FunctionName       string
 	FunctionSystemName string
 	FunctionFilename   string
+	// NumLines is how many lines the location carried. Only line[0] is decoded
+	// into the fields above; NumLines > 1 means inlined callers were dropped
+	// (guettli/parca#109). It is exposed so ingest can count the loss.
+	NumLines int64
 }
 
 // decodeLineInfo decodes the line/function portion of a varint-encoded
@@ -255,6 +285,7 @@ func decodeLineInfo(data []byte) lineInfo {
 	if !ok {
 		return info
 	}
+	info.NumLines = int64(numLines)
 	hasMapping, ok := flag()
 	if !ok {
 		return info

@@ -44,7 +44,7 @@ func TestDeleteOlderThan(t *testing.T) {
 
 	client := newTestClient(t)
 	ctx := context.Background()
-	ing := duckdb.NewIngester(log.NewNopLogger(), client)
+	ing := duckdb.NewIngester(log.NewNopLogger(), client, nil)
 
 	now := time.Now()
 	cutoff := now.Add(-7 * 24 * time.Hour).UnixMilli()
@@ -81,7 +81,7 @@ func TestRunRetentionDisabled(t *testing.T) {
 
 	client := newTestClient(t)
 	ctx := context.Background()
-	ing := duckdb.NewIngester(log.NewNopLogger(), client)
+	ing := duckdb.NewIngester(log.NewNopLogger(), client, nil)
 
 	rec := buildSampleRecord(t, mem, time.Now().Add(-100*24*time.Hour).UnixMilli())
 	require.NoError(t, ing.Ingest(ctx, rec))

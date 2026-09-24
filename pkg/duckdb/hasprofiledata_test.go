@@ -52,7 +52,7 @@ func TestHasProfileData(t *testing.T) {
 	const tsMillis int64 = 1_700_000_000_000
 	rec := buildSampleRecord(t, mem, tsMillis)
 	defer rec.Release()
-	require.NoError(t, duckdb.NewIngester(log.NewNopLogger(), client).Ingest(ctx, rec))
+	require.NoError(t, duckdb.NewIngester(log.NewNopLogger(), client, nil).Ingest(ctx, rec))
 
 	has, err = q.HasProfileData(ctx)
 	require.NoError(t, err)
