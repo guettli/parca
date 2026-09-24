@@ -27,6 +27,11 @@ ifeq ($(ENABLE_RACE), yes)
 	SANITIZERS += -race
 endif
 
+# Extra flags for `go test`, e.g. `-p 1` to cap package parallelism. CI sets this
+# on the amd64 runner so the `-race` build does not spike memory and OOM-kill the
+# runner (see .github/workflows/build-test.yml).
+GO_TEST_FLAGS ?=
+
 .PHONY: build
 build: ui/build go/bin
 
@@ -92,12 +97,12 @@ check-license:
 
 .PHONY: go/test
 go/test:
-	go test $(SANITIZERS) -tags assert -v `go list ./...`
+	go test $(SANITIZERS) $(GO_TEST_FLAGS) -tags assert -v `go list ./...`
 
 .PHONY: go/bench
 go/bench:
 	mkdir -pm 777 tmp/
-	go test $(SANITIZERS) -run=. -bench=. -benchtime=1x -v `go list ./...` # run benchmark with one iteration to make sure they work
+	go test $(SANITIZERS) $(GO_TEST_FLAGS) -run=. -bench=. -benchtime=1x -v `go list ./...` # run benchmark with one iteration to make sure they work
 
 VCR_FILES ?= $(shell find ./pkg/*/testdata -name "fixtures.yaml")
 
