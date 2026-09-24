@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	"github.com/go-kit/log"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/parca-dev/parca/pkg/profilestore"
@@ -34,6 +35,7 @@ import (
 func setupDuckDBBackend(
 	_ context.Context,
 	_ log.Logger,
+	_ prometheus.Registerer,
 	_ trace.TracerProvider,
 	_ *symbolizer.Symbolizer,
 	_ *Flags,

@@ -163,7 +163,7 @@ func TestIngestAndQueryRoundTrip(t *testing.T) {
 	rec := buildSampleRecord(t, mem, tsMillis)
 	defer rec.Release()
 
-	ing := duckdb.NewIngester(logger, client)
+	ing := duckdb.NewIngester(logger, client, nil)
 	require.NoError(t, ing.Ingest(ctx, rec))
 
 	q := duckdb.NewQuerier(client, logger, tracer, mem, nopSymbolizer{})

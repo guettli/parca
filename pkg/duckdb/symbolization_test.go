@@ -131,7 +131,7 @@ func queryFunctionNames(t *testing.T, tsMillis int64, sym symbolizer.Symbolizati
 
 	rec := build(mem)
 	defer rec.Release()
-	require.NoError(t, duckdb.NewIngester(log.NewNopLogger(), client).Ingest(ctx, rec))
+	require.NoError(t, duckdb.NewIngester(log.NewNopLogger(), client, nil).Ingest(ctx, rec))
 
 	p, err := q.QueryMerge(ctx,
 		`process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta{job="test"}`,

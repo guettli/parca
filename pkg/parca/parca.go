@@ -345,7 +345,7 @@ func Run(ctx context.Context, logger log.Logger, reg *prometheus.Registry, flags
 		// only into binaries built with the "duckdb" build tag (and
 		// CGO_ENABLED=1). In a CGO-free release binary setupDuckDBBackend
 		// returns an error explaining the backend is unavailable.
-		profileIngester, querier, closeBackend, err = setupDuckDBBackend(ctx, logger, tracerProvider, sharedSymbolizer, flags)
+		profileIngester, querier, closeBackend, err = setupDuckDBBackend(ctx, logger, reg, tracerProvider, sharedSymbolizer, flags)
 		if err != nil {
 			return err
 		}
@@ -371,7 +371,7 @@ func Run(ctx context.Context, logger log.Logger, reg *prometheus.Registry, flags
 			return fmt.Errorf("failed to ensure ClickHouse schema: %w", err)
 		}
 
-		profileIngester = clickhouse.NewIngester(logger, chClient)
+		profileIngester = clickhouse.NewIngester(logger, chClient, reg)
 		querier = clickhouse.NewQuerier(
 			chClient,
 			logger,

@@ -22,6 +22,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/parca-dev/parca/pkg/duckdb"
@@ -37,6 +38,7 @@ import (
 func setupDuckDBBackend(
 	ctx context.Context,
 	logger log.Logger,
+	reg prometheus.Registerer,
 	tracerProvider trace.TracerProvider,
 	sharedSymbolizer *symbolizer.Symbolizer,
 	flags *Flags,
@@ -58,7 +60,7 @@ func setupDuckDBBackend(
 		return nil, nil, nil, fmt.Errorf("failed to ensure DuckDB schema: %w", err)
 	}
 
-	profileIngester := duckdb.NewIngester(logger, ddClient)
+	profileIngester := duckdb.NewIngester(logger, ddClient, reg)
 	querier := duckdb.NewQuerier(
 		ddClient,
 		logger,

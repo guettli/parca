@@ -72,7 +72,7 @@ func TestSlowReadDoesNotBlockWrites(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err := duckdb.NewIngester(log.NewNopLogger(), client).Ingest(writeCtx, rec)
+	err := duckdb.NewIngester(log.NewNopLogger(), client, nil).Ingest(writeCtx, rec)
 	elapsed := time.Since(start)
 
 	require.NoError(t, err, "a write could not proceed while a read was running")
@@ -104,7 +104,7 @@ func TestConcurrentWritesAllLand(t *testing.T) {
 
 	client := newTestClient(t)
 	ctx := context.Background()
-	ing := duckdb.NewIngester(log.NewNopLogger(), client)
+	ing := duckdb.NewIngester(log.NewNopLogger(), client, nil)
 
 	const writers = 8
 	recs := make([]interface{ Release() }, writers)
@@ -146,7 +146,7 @@ func TestCheckpointDoesNotRaceAppends(t *testing.T) {
 
 	client := newTestClient(t)
 	ctx := context.Background()
-	ing := duckdb.NewIngester(log.NewNopLogger(), client)
+	ing := duckdb.NewIngester(log.NewNopLogger(), client, nil)
 
 	const writers = 6
 	recs := make([]interface{ Release() }, writers)
@@ -212,7 +212,7 @@ func TestWriteHonoursItsDeadline(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err = duckdb.NewIngester(log.NewNopLogger(), client).Ingest(ctx, rec)
+	err = duckdb.NewIngester(log.NewNopLogger(), client, nil).Ingest(ctx, rec)
 	require.Error(t, err, "a write with no slot and no time left must fail")
 	require.Less(t, time.Since(start), 5*time.Second, "the write ignored its deadline")
 }
@@ -233,7 +233,7 @@ func TestRetentionLogsCheckpointDuration(t *testing.T) {
 
 	old := time.Now().Add(-100 * 24 * time.Hour).UnixMilli()
 	rec := buildSampleRecord(t, mem, old)
-	require.NoError(t, duckdb.NewIngester(log.NewNopLogger(), client).Ingest(ctx, rec))
+	require.NoError(t, duckdb.NewIngester(log.NewNopLogger(), client, nil).Ingest(ctx, rec))
 	rec.Release()
 	require.Equal(t, 1, countRows(t, client))
 

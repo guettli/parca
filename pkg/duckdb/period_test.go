@@ -55,7 +55,7 @@ func TestQueryCarriesPeriodAndDuration(t *testing.T) {
 
 	rec := buildSampleRecord(t, mem, tsMillis)
 	defer rec.Release()
-	require.NoError(t, duckdb.NewIngester(logger, client).Ingest(ctx, rec))
+	require.NoError(t, duckdb.NewIngester(logger, client, nil).Ingest(ctx, rec))
 
 	q := duckdb.NewQuerier(client, logger, tracer, mem, nopSymbolizer{})
 	queryStr := `process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta{job="test"}`

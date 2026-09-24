@@ -35,6 +35,10 @@ func TestDecodeLineInfoMatchesTheCorpus(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			got := decodeLineInfo(c.Encoded)
 
+			// NumLines reflects every line the location carried, including the
+			// inlined callers that are otherwise dropped (guettli/parca#109).
+			require.Equal(t, int64(len(c.Lines)), got.NumLines, "numLines")
+
 			if len(c.Lines) == 0 {
 				// No lines: the decoder returns a zero lineInfo.
 				require.Empty(t, got.FunctionName)
