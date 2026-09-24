@@ -55,6 +55,7 @@ jobs:
           [
             "**.go",
             ".github/workflows/build-test.yml",
+            "Makefile",
             ".go-version",
             ".node-version",
             "go.mod",
@@ -72,7 +73,10 @@ jobs:
       with:
         go-version-file: .go-version
 
+    # Guarded like the others: without this, a skipped run (no checkout) still
+    # ran pnpm setup and failed with "No pnpm version is specified".
     - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
 
     - name: Set up Node.js
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
