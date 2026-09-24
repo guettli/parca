@@ -333,6 +333,10 @@ func NormalizePprof(
 		profiles = append(profiles, normalizedProfile)
 	}
 
+	// One encoded slice per distinct location, shared across every sample and
+	// value in this profile that references it (guettli/parca#110).
+	locationCache := make(map[uint64][]byte, len(p.Location))
+
 	for _, sample := range p.Sample {
 		labels, numLabels := LabelsFromSample(takenLabelNames, p.StringTable, sample.Label)
 		for j, value := range sample.Value {
@@ -347,6 +351,7 @@ func NormalizePprof(
 					p.Function,
 					p.Mapping,
 					p.StringTable,
+					locationCache,
 				),
 				Value:    sample.Value[j],
 				Label:    labels,
@@ -409,10 +414,23 @@ func serializePprofStacktrace(
 	functions []*pprofpb.Function,
 	mappings []*pprofpb.Mapping,
 	stringTable []string,
+	cache map[uint64][]byte,
 ) [][]byte {
 	st := make([][]byte, 0, len(ids))
 
 	for _, locationId := range ids {
+		// A location's encoding is a pure function of its id within one pprof
+		// (location, mapping, functions and stringTable all come from the same
+		// profile), and a hot frame recurs across many samples. Encode each unique
+		// location once and share the slice: the encoded bytes are copied into the
+		// Arrow dictionary builder on Append, so sharing is safe, and it keeps the
+		// live [][]byte down to one slice per distinct location rather than one per
+		// occurrence (guettli/parca#110).
+		if enc, ok := cache[locationId]; ok {
+			st = append(st, enc)
+			continue
+		}
+
 		location := locations[locationId-1]
 		var m *pprofpb.Mapping
 		if location.MappingId != 0 {
@@ -420,7 +438,9 @@ func serializePprofStacktrace(
 			m = mappings[mappingIndex]
 		}
 
-		st = append(st, profile.EncodePprofLocation(location, m, functions, stringTable))
+		enc := profile.EncodePprofLocation(location, m, functions, stringTable)
+		cache[locationId] = enc
+		st = append(st, enc)
 	}
 
 	return st
@@ -549,4 +569,3 @@ func LabelNamesFromSamples(
 		allLabels[labelName] = struct{}{}
 	}
 }
-
