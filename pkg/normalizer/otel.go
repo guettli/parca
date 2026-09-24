@@ -153,18 +153,18 @@ type profileWriter struct {
 
 	rb *array.RecordBuilder
 
-	duration   *array.Int64Builder
-	name       *array.BinaryDictionaryBuilder
-	period     *array.Int64Builder
-	periodType *array.BinaryDictionaryBuilder
-	periodUnit *array.BinaryDictionaryBuilder
-	sampleType *array.BinaryDictionaryBuilder
-	sampleUnit *array.BinaryDictionaryBuilder
-	stacktrace *array.ListBuilder
+	duration      *array.Int64Builder
+	name          *array.BinaryDictionaryBuilder
+	period        *array.Int64Builder
+	periodType    *array.BinaryDictionaryBuilder
+	periodUnit    *array.BinaryDictionaryBuilder
+	sampleType    *array.BinaryDictionaryBuilder
+	sampleUnit    *array.BinaryDictionaryBuilder
+	stacktrace    *array.ListBuilder
 	stacktraceVal *array.BinaryDictionaryBuilder
-	timestamp  *array.Int64Builder
-	timeNanos  *array.Int64Builder
-	value      *array.Int64Builder
+	timestamp     *array.Int64Builder
+	timeNanos     *array.Int64Builder
+	value         *array.Int64Builder
 
 	// labelBuilders are aligned with labelNames.
 	labelBuilders []*array.BinaryDictionaryBuilder
@@ -275,6 +275,12 @@ func (w *profileWriter) appendSample(meta profile.Meta, value int64, locations [
 func (w *profileWriter) writeResourceProfiles(
 	req *otelgrpcprofilingpb.ExportProfilesServiceRequest,
 ) error {
+	// One encoded slice per distinct location, shared across every sample in the
+	// request that references it. All the location tables live in req.Dictionary,
+	// so the encoding is a pure function of the location index request-wide
+	// (guettli/parca#110).
+	locationCache := make(map[int32][]byte, len(req.Dictionary.LocationTable))
+
 	for _, rp := range req.ResourceProfiles {
 		for _, sp := range rp.ScopeProfiles {
 			for _, p := range sp.Profiles {
@@ -301,6 +307,7 @@ func (w *profileWriter) writeResourceProfiles(
 						req.Dictionary.AttributeTable,
 						req.Dictionary.StackTable,
 						req.Dictionary.StringTable,
+						locationCache,
 					)
 
 					// see https://github.com/open-telemetry/opentelemetry-proto/blob/30fc16100aa513254a71ef83ae2de321fb1bdfeb/opentelemetry/proto/profiles/v1development/profiles.proto#L345
@@ -732,11 +739,22 @@ func serializeOtelStacktrace(
 	attributes []*otelprofilingpb.KeyValueAndUnit,
 	stackTable []*otelprofilingpb.Stack,
 	stringTable []string,
+	cache map[int32][]byte,
 ) [][]byte {
 	stack := stackTable[s.StackIndex]
 	st := make([][]byte, 0, len(stack.LocationIndices))
 
 	for _, locationIndex := range stack.LocationIndices {
+		// The encoding is a pure function of the location index within a request
+		// (every table here comes from req.Dictionary), and a hot frame recurs
+		// across many samples. Encode each distinct location once and share the
+		// slice -- the bytes are copied into the Arrow dictionary builder on
+		// Append, so sharing is safe (guettli/parca#110).
+		if enc, ok := cache[locationIndex]; ok {
+			st = append(st, enc)
+			continue
+		}
+
 		location := locations[locationIndex]
 		var m *otelprofilingpb.Mapping
 
@@ -744,13 +762,15 @@ func serializeOtelStacktrace(
 			m = mappings[location.MappingIndex]
 		}
 
-		st = append(st, profile.EncodeOtelLocation(
+		enc := profile.EncodeOtelLocation(
 			attributes,
 			location,
 			m,
 			functions,
 			stringTable,
-		))
+		)
+		cache[locationIndex] = enc
+		st = append(st, enc)
 	}
 
 	return st

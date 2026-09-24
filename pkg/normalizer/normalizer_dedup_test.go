@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	otelprofilingpb "go.opentelemetry.io/proto/otlp/profiles/v1development"
+
 	pprofpb "github.com/parca-dev/parca/gen/proto/go/google/pprof"
 	"github.com/parca-dev/parca/pkg/profile"
 )
@@ -62,11 +64,38 @@ func TestSerializePprofStacktraceMemoizesLocations(t *testing.T) {
 	require.Equal(t, want, st1[0], "memoized encoding must match EncodePprofLocation")
 }
 
+// The OTLP ingest path memoizes the same way (guettli/parca#110): a location is
+// encoded once per request and the slice is shared across every stacktrace that
+// references it.
+func TestSerializeOtelStacktraceMemoizesLocations(t *testing.T) {
+	locations := []*otelprofilingpb.Location{
+		{Address: 0x1000}, // index 0, no mapping/lines -> minimal encoding
+		{Address: 0x2000}, // index 1
+	}
+	stringTable := []string{""}
+	cache := map[int32][]byte{}
+
+	// Two stacktraces that both reference location index 0.
+	st1 := serializeOtelStacktrace(nil,
+		&otelprofilingpb.Sample{StackIndex: 0}, nil, nil, locations, nil,
+		[]*otelprofilingpb.Stack{{LocationIndices: []int32{0, 1}}}, stringTable, cache)
+	st2 := serializeOtelStacktrace(nil,
+		&otelprofilingpb.Sample{StackIndex: 0}, nil, nil, locations, nil,
+		[]*otelprofilingpb.Stack{{LocationIndices: []int32{1, 0}}}, stringTable, cache)
+
+	require.Len(t, cache, 2, "each distinct location must be encoded exactly once")
+	require.Equal(t, fmt.Sprintf("%p", st1[0]), fmt.Sprintf("%p", st2[1]),
+		"a repeated location must reuse the cached encoded slice")
+
+	want := profile.EncodeOtelLocation(nil, locations[0], nil, nil, stringTable)
+	require.Equal(t, want, st1[0], "memoized encoding must match EncodeOtelLocation")
+}
+
 // BenchmarkSerializePprofStacktrace models a profile whose samples repeatedly
 // reference a small pool of locations (a hot frame recurs across stacktraces).
 // With the per-profile cache, allocations are proportional to the number of
-// distinct locations rather than the number of occurrences -- run with -benchmem
-// to see allocs/op stay flat as the sample count grows.
+// distinct locations (64 here) rather than the number of location occurrences
+// (200 stacks x 20 frames). Run with -benchmem to see allocs/op.
 func BenchmarkSerializePprofStacktrace(b *testing.B) {
 	const distinct = 64
 	stringTable := []string{""}
