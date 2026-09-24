@@ -193,39 +193,20 @@ func (q *ColumnQueryAPI) QueryRange(ctx context.Context, req *pb.QueryRangeReque
 	}, nil
 }
 
-// defaultProfileTypesLookback bounds a ProfileTypes request that arrives with no
-// time range. The querier treats a zero range as "all of history" and runs an
-// unbounded SELECT DISTINCT over the whole table (guettli/parca#119) -- the scan
-// behind the #99 incident, one unset field away. The UI sends a range-less
-// request on some paths (ProfileSelector), so default to a recent window rather
-// than reject: it returns the currently-available types (which are stable, so a
-// recent window captures them) while keeping the scan bounded. True all-time
-// semantics would instead need a set of types materialized at ingest.
-const defaultProfileTypesLookback = 24 * time.Hour
-
 // Types returns the available types of profiles.
+//
+// A request with no time range is passed through as-is, matching upstream
+// parca-dev/parca: the querier then reports every profile type in the store (its
+// time filter applies only when both bounds are non-zero). The #99 incident that
+// motivated bounding this -- HasProfileData polling ProfileTypes with zero
+// timestamps -- was fixed at the source in #118 (HasProfileData now uses a
+// LIMIT 1 existence check), so there is no frequent range-less caller to guard
+// against here.
 func (q *ColumnQueryAPI) ProfileTypes(ctx context.Context, req *pb.ProfileTypesRequest) (
 	*pb.ProfileTypesResponse,
 	error,
 ) {
-	start, end := req.Start.AsTime(), req.End.AsTime()
-	startSet, endSet := start.Unix() != 0, end.Unix() != 0
-	switch {
-	case !startSet && !endSet:
-		// No range at all -- the UI's ProfileSelector sends this. Bound it to a
-		// recent lookback rather than let the backends full-scan the whole table
-		// (they skip their time filter unless both bounds are non-zero).
-		end = time.Now()
-		start = end.Add(-defaultProfileTypesLookback)
-	case startSet != endSet:
-		// Exactly one bound set is malformed. Defaulting it would silently ignore
-		// the bound the caller did provide; passing it through would full-scan
-		// (the backends skip the filter when either bound is zero). Fail clearly.
-		return nil, status.Error(codes.InvalidArgument,
-			"profile types: provide both start and end, or neither")
-	}
-
-	types, err := q.querier.ProfileTypes(ctx, start, end)
+	types, err := q.querier.ProfileTypes(ctx, req.Start.AsTime(), req.End.AsTime())
 	if err != nil {
 		return nil, err
 	}
