@@ -209,14 +209,20 @@ func (q *ColumnQueryAPI) ProfileTypes(ctx context.Context, req *pb.ProfileTypesR
 	error,
 ) {
 	start, end := req.Start.AsTime(), req.End.AsTime()
-	// The backends apply their time filter only when BOTH bounds are non-zero, so
-	// they full-scan whenever EITHER is zero (start==0 || end==0), not just when
-	// the whole range is empty. Mirror that exact condition and bound the whole
-	// window: a one-sided or epoch bound is unusable for a bounded scan anyway
-	// (an ancient set bound would still scan all of history).
-	if start.Unix() == 0 || end.Unix() == 0 {
+	startSet, endSet := start.Unix() != 0, end.Unix() != 0
+	switch {
+	case !startSet && !endSet:
+		// No range at all -- the UI's ProfileSelector sends this. Bound it to a
+		// recent lookback rather than let the backends full-scan the whole table
+		// (they skip their time filter unless both bounds are non-zero).
 		end = time.Now()
 		start = end.Add(-defaultProfileTypesLookback)
+	case startSet != endSet:
+		// Exactly one bound set is malformed. Defaulting it would silently ignore
+		// the bound the caller did provide; passing it through would full-scan
+		// (the backends skip the filter when either bound is zero). Fail clearly.
+		return nil, status.Error(codes.InvalidArgument,
+			"profile types: provide both start and end, or neither")
 	}
 
 	types, err := q.querier.ProfileTypes(ctx, start, end)
