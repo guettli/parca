@@ -61,6 +61,44 @@ func TestProfileTypesBoundsUnsetRange(t *testing.T) {
 		require.Equal(t, defaultProfileTypesLookback, rec.gotEnd.Sub(rec.gotStart))
 	})
 
+	// A one-sided range (only Start, or only End) is the trap: the backends skip
+	// their filter whenever EITHER bound is zero, so a request with a single bound
+	// -- or an epoch bound -- still full-scans if the handler only guards the
+	// both-zero case. Both must be bounded.
+	t.Run("only start set is still bounded", func(t *testing.T) {
+		rec := &recordingQuerier{}
+		api := &ColumnQueryAPI{querier: rec}
+
+		start := time.Unix(1_700_000_000, 0).UTC()
+		before := time.Now()
+		_, err := api.ProfileTypes(context.Background(), &pb.ProfileTypesRequest{
+			Start: timestamppb.New(start),
+			// End unset -> End.Unix() == 0 -> backend would skip the filter.
+		})
+		require.NoError(t, err)
+		require.NotZero(t, rec.gotStart.Unix(), "start still zero -> querier full-scans")
+		require.NotZero(t, rec.gotEnd.Unix(), "end still zero -> querier full-scans")
+		require.WithinDuration(t, before, rec.gotEnd, 5*time.Second)
+		require.Equal(t, defaultProfileTypesLookback, rec.gotEnd.Sub(rec.gotStart))
+	})
+
+	t.Run("only end set is still bounded", func(t *testing.T) {
+		rec := &recordingQuerier{}
+		api := &ColumnQueryAPI{querier: rec}
+
+		end := time.Unix(1_700_003_600, 0).UTC()
+		before := time.Now()
+		_, err := api.ProfileTypes(context.Background(), &pb.ProfileTypesRequest{
+			End: timestamppb.New(end),
+			// Start unset -> Start.Unix() == 0 -> backend would skip the filter.
+		})
+		require.NoError(t, err)
+		require.NotZero(t, rec.gotStart.Unix(), "start still zero -> querier full-scans")
+		require.NotZero(t, rec.gotEnd.Unix(), "end still zero -> querier full-scans")
+		require.WithinDuration(t, before, rec.gotEnd, 5*time.Second)
+		require.Equal(t, defaultProfileTypesLookback, rec.gotEnd.Sub(rec.gotStart))
+	})
+
 	t.Run("an explicit range is passed through unchanged", func(t *testing.T) {
 		rec := &recordingQuerier{}
 		api := &ColumnQueryAPI{querier: rec}

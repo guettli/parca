@@ -209,9 +209,12 @@ func (q *ColumnQueryAPI) ProfileTypes(ctx context.Context, req *pb.ProfileTypesR
 	error,
 ) {
 	start, end := req.Start.AsTime(), req.End.AsTime()
-	if start.Unix() == 0 && end.Unix() == 0 {
-		// No range given: bound it instead of letting the querier scan the whole
-		// table (see defaultProfileTypesLookback).
+	// The backends apply their time filter only when BOTH bounds are non-zero, so
+	// they full-scan whenever EITHER is zero (start==0 || end==0), not just when
+	// the whole range is empty. Mirror that exact condition and bound the whole
+	// window: a one-sided or epoch bound is unusable for a bounded scan anyway
+	// (an ancient set bound would still scan all of history).
+	if start.Unix() == 0 || end.Unix() == 0 {
 		end = time.Now()
 		start = end.Add(-defaultProfileTypesLookback)
 	}
