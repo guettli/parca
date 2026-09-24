@@ -30,7 +30,6 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/math"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/olekukonko/tablewriter"
-	"github.com/parca-dev/parca/pkg/query/internal/builder"
 	"github.com/zeebo/xxh3"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -38,6 +37,7 @@ import (
 	queryv1alpha1 "github.com/parca-dev/parca/gen/proto/go/parca/query/v1alpha1"
 	compactDictionary "github.com/parca-dev/parca/pkg/compactdictionary"
 	"github.com/parca-dev/parca/pkg/profile"
+	"github.com/parca-dev/parca/pkg/query/internal/builder"
 )
 
 const (

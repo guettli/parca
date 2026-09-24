@@ -48,6 +48,10 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      # Vendored from FrostDB (pqarrow builder + arrowutils); kept close to
+      # upstream, so exempt from Parca's lint rules (depguard, staticcheck).
+      - pkg/query/internal/arrowutils
+      - pkg/query/internal/builder
 formatters:
   enable:
     - gofumpt
