@@ -23,6 +23,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
+      # Don't let a runner that GitHub reclaims mid-run (SIGTERM/"operation
+      # was canceled") on one arch cancel the other arch's healthy job.
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
