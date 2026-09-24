@@ -39,56 +39,32 @@ func (r *recordingQuerier) ProfileTypes(_ context.Context, start, end time.Time)
 	return nil, nil
 }
 
-// A ProfileTypesRequest must never reach the querier as a zero range: both
-// backends treat that as "all of history" and run an unbounded SELECT DISTINCT
-// over the whole table (guettli/parca#119). The fully range-less request the UI
-// sends is bounded to a lookback; a malformed one-sided range is rejected.
-func TestProfileTypesBoundsUnsetRange(t *testing.T) {
-	t.Run("unset range is bounded to a lookback, not all of history", func(t *testing.T) {
+// ProfileTypes must never reach the querier with a zero bound: the backends drop
+// their time filter unless both bounds are non-zero and then run an unbounded
+// SELECT DISTINCT over the whole table (guettli/parca#119). No caller needs a
+// range-less query, so every request missing a bound -- both unset or one-sided --
+// is rejected with InvalidArgument and never reaches the querier; an explicit
+// range passes through.
+func TestProfileTypesRequiresRange(t *testing.T) {
+	reject := func(t *testing.T, req *pb.ProfileTypesRequest) {
+		t.Helper()
 		rec := &recordingQuerier{}
 		api := &ColumnQueryAPI{querier: rec}
+		_, err := api.ProfileTypes(context.Background(), req)
+		require.Equal(t, codes.InvalidArgument, status.Code(err), "a missing bound must be rejected")
+		require.False(t, rec.called, "querier must not be called for a rejected request")
+	}
 
-		before := time.Now()
-		_, err := api.ProfileTypes(context.Background(), &pb.ProfileTypesRequest{})
-		require.NoError(t, err)
-		require.True(t, rec.called)
-
-		// The querier must not receive the zero range that triggers a full scan.
-		require.NotZero(t, rec.gotStart.Unix(), "start still zero -> querier full-scans the table")
-		require.NotZero(t, rec.gotEnd.Unix(), "end still zero -> querier full-scans the table")
-
-		// End is ~now and the window is exactly one lookback wide.
-		require.WithinDuration(t, before, rec.gotEnd, 5*time.Second)
-		require.Equal(t, defaultProfileTypesLookback, rec.gotEnd.Sub(rec.gotStart))
+	t.Run("both bounds unset is rejected", func(t *testing.T) {
+		reject(t, &pb.ProfileTypesRequest{})
 	})
 
-	// A one-sided range (only Start, or only End) is malformed: silently
-	// defaulting it would ignore the bound the caller provided, and passing it
-	// through would full-scan (the backends skip the filter when either bound is
-	// zero). It must be rejected with InvalidArgument, and the querier must never
-	// be reached.
 	t.Run("only start set is rejected", func(t *testing.T) {
-		rec := &recordingQuerier{}
-		api := &ColumnQueryAPI{querier: rec}
-
-		_, err := api.ProfileTypes(context.Background(), &pb.ProfileTypesRequest{
-			Start: timestamppb.New(time.Unix(1_700_000_000, 0).UTC()),
-			// End unset -> End.Unix() == 0.
-		})
-		require.Equal(t, codes.InvalidArgument, status.Code(err), "one-sided range must be rejected")
-		require.False(t, rec.called, "querier must not be called for a rejected request")
+		reject(t, &pb.ProfileTypesRequest{Start: timestamppb.New(time.Unix(1_700_000_000, 0).UTC())})
 	})
 
 	t.Run("only end set is rejected", func(t *testing.T) {
-		rec := &recordingQuerier{}
-		api := &ColumnQueryAPI{querier: rec}
-
-		_, err := api.ProfileTypes(context.Background(), &pb.ProfileTypesRequest{
-			End: timestamppb.New(time.Unix(1_700_003_600, 0).UTC()),
-			// Start unset -> Start.Unix() == 0.
-		})
-		require.Equal(t, codes.InvalidArgument, status.Code(err), "one-sided range must be rejected")
-		require.False(t, rec.called, "querier must not be called for a rejected request")
+		reject(t, &pb.ProfileTypesRequest{End: timestamppb.New(time.Unix(1_700_003_600, 0).UTC())})
 	})
 
 	t.Run("an explicit range is passed through unchanged", func(t *testing.T) {
