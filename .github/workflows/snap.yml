@@ -154,6 +154,27 @@ jobs:
           sudo snap set parca log-level=debug
           parca --version
 
+      - name: Start ClickHouse
+        run: |
+          # Parca stores profile data in ClickHouse (the only storage backend
+          # compiled into the CGO-free release binary), so the snap needs a
+          # ClickHouse server reachable on the default localhost:9000 before it
+          # can start.
+          docker run -d --name clickhouse \
+            --ulimit nofile=262144:262144 \
+            -p 9000:9000 -p 8123:8123 \
+            clickhouse/clickhouse-server:24.8
+
+          # Wait for ClickHouse to accept queries before starting Parca.
+          for i in $(seq 1 30); do
+            if docker exec clickhouse clickhouse-client --query "SELECT 1" >/dev/null 2>&1; then
+              echo "ClickHouse is ready"
+              break
+            fi
+            echo "Waiting for ClickHouse... ($i)"
+            sleep 2
+          done
+
       - name: Start Parca - default config
         run: |
           sudo snap start parca
