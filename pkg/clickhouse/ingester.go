@@ -34,8 +34,9 @@ type Ingester struct {
 	logger log.Logger
 	client *Client
 
-	locationsDecoded     prometheus.Counter
-	inlinedFramesDropped prometheus.Counter
+	locationsTotal             prometheus.Counter
+	locationsWithInlinedFrames prometheus.Counter
+	inlinedFramesDropped       prometheus.Counter
 }
 
 // NewIngester creates a new ClickHouse ingester. reg may be nil (metrics are then
@@ -45,13 +46,17 @@ func NewIngester(logger log.Logger, client *Client, reg prometheus.Registerer) *
 	return &Ingester{
 		logger: logger,
 		client: client,
-		locationsDecoded: factory.NewCounter(prometheus.CounterOpts{
-			Name: "parca_ingest_locations_decoded_total",
-			Help: "Total profile-stack locations decoded at ingest.",
+		locationsTotal: factory.NewCounter(prometheus.CounterOpts{
+			Name: "parca_ingest_locations_total",
+			Help: "Total location references decoded at ingest; a location referenced by N stacktraces counts N times.",
+		}),
+		locationsWithInlinedFrames: factory.NewCounter(prometheus.CounterOpts{
+			Name: "parca_ingest_locations_with_inlined_frames_total",
+			Help: "Location references whose location carried more than one line (inlined callers present); only the innermost line is stored (guettli/parca#109).",
 		}),
 		inlinedFramesDropped: factory.NewCounter(prometheus.CounterOpts{
-			Name: "parca_ingest_locations_inlined_dropped_total",
-			Help: "Locations whose inlined caller frames were dropped at ingest (numLines > 1); only the innermost line is stored (guettli/parca#109).",
+			Name: "parca_ingest_inlined_frames_dropped_total",
+			Help: "Total inlined caller frames dropped at ingest (sum of numLines-1 over locations with more than one line).",
 		}),
 	}
 }
@@ -360,12 +365,13 @@ func (i *Ingester) extractStacktraceData(record arrow.RecordBatch, colIdx, row i
 
 		// Decode line/function info
 		lineInfo := decodeLineInfo(encodedLocation)
-		if i.locationsDecoded != nil {
-			i.locationsDecoded.Inc()
+		if i.locationsTotal != nil {
+			i.locationsTotal.Inc()
 			if lineInfo.NumLines > 1 {
 				// Inlined caller frames were dropped here; only line[0] is stored
-				// (guettli/parca#109).
-				i.inlinedFramesDropped.Inc()
+				// (guettli/parca#109). numLines-1 of them are lost.
+				i.locationsWithInlinedFrames.Inc()
+				i.inlinedFramesDropped.Add(float64(lineInfo.NumLines - 1))
 			}
 		}
 		data.LineNumbers = append(data.LineNumbers, lineInfo.LineNumber)

@@ -75,8 +75,10 @@ func TestIngestCountsDroppedInlinedFrames(t *testing.T) {
 	defer rec.Release()
 	require.NoError(t, ing.Ingest(context.Background(), rec))
 
-	require.Equal(t, 1.0, counterValue(t, reg, "parca_ingest_locations_decoded_total"),
-		"one location was decoded")
-	require.Equal(t, 1.0, counterValue(t, reg, "parca_ingest_locations_inlined_dropped_total"),
-		"the two-line location's inlined caller must be counted as dropped")
+	require.Equal(t, 1.0, counterValue(t, reg, "parca_ingest_locations_total"),
+		"one location reference was decoded")
+	require.Equal(t, 1.0, counterValue(t, reg, "parca_ingest_locations_with_inlined_frames_total"),
+		"the two-line location must be counted as having inlined frames")
+	require.Equal(t, 1.0, counterValue(t, reg, "parca_ingest_inlined_frames_dropped_total"),
+		"a two-line location drops numLines-1 = 1 inlined frame")
 }
