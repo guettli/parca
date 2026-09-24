@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       should_skip: ${{ steps.skip-check.outputs.should_skip }}
+      has_token: ${{ steps.token-check.outputs.has_token }}
     permissions:
       actions: write
       contents: read
@@ -32,10 +33,24 @@ jobs:
             ]
           skip_after_successful_duplicate: false
 
+      # Publishing needs a GH_PAT_UI secret to check out with write access and
+      # push version bumps. Forks that only track upstream have no such secret,
+      # so record whether it is configured and skip the publish job below when
+      # it is absent instead of failing the checkout step.
+      - id: token-check
+        env:
+          GH_PAT_UI: ${{ secrets.GH_PAT_UI }}
+        run: |
+          if [ -n "$GH_PAT_UI" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
   publish-ui-components:
     name: Publish UI components to NPM
     needs: skip-check
-    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
+    if: ${{ needs.skip-check.outputs.should_skip != 'true' && needs.skip-check.outputs.has_token == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
