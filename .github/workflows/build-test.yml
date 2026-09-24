@@ -15,7 +15,10 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs, but never cancel a push to main/release: an
+  # interrupted run gets SIGTERM'd mid-test and never saves its Go build cache,
+  # which leaves the next run cold (a full -race rebuild) and prone to OOM.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
@@ -23,12 +26,21 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
             runner: ubuntu-latest
+            # Cap package parallelism: the default (-p = nproc = 4) builds and
+            # runs up to four -race-instrumented packages at once, which spikes
+            # memory past the 16 GB runner and gets it OOM-killed (the runner
+            # receives a shutdown signal mid-test). -p 1 serialises the build so
+            # peak memory stays bounded; once a run completes, setup-go caches the
+            # build and later runs are fast again.
+            go_test_flags: '-p 1'
           - arch: arm64
             runner: ubuntu-24.04-arm
+            go_test_flags: ''
     steps:
     - id: skip-check
       uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
@@ -74,12 +86,12 @@ jobs:
     - name: Test
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
       run: |
-        make test ENABLE_RACE=yes
+        make test ENABLE_RACE=yes GO_TEST_FLAGS='${{ matrix.go_test_flags }}'
 
     - name: Benchmark
       if: ${{ steps.skip-check.outputs.should_skip != 'true' && matrix.arch == 'amd64' }}
       run: |
-        make go/bench
+        make go/bench GO_TEST_FLAGS='${{ matrix.go_test_flags }}'
 
     - name: Archive generated artifacts
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
