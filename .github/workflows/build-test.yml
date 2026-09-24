@@ -76,12 +76,6 @@ jobs:
 
     - name: Test
       if: ${{ steps.skip-check.outputs.should_skip != 'true' }}
-      # Cap parallelism so the memory-heavy `-race` test binaries don't run
-      # all at once and exhaust the runner (which manifests as the job being
-      # SIGTERM'd mid-run: "make ... Terminated", exit 143). GOMAXPROCS caps
-      # both `go test -p` (parallel packages) and `-parallel` (tests per pkg).
-      env:
-        GOMAXPROCS: '2'
       run: |
         make test ENABLE_RACE=yes
 
