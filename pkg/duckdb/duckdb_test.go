@@ -134,7 +134,7 @@ func appendUvarint(b []byte, v uint64) []byte {
 	return append(b, byte(v))
 }
 
-func appendBytes(b []byte, payload []byte) []byte {
+func appendBytes(b, payload []byte) []byte {
 	b = appendUvarint(b, uint64(len(payload)))
 	return append(b, payload...)
 }
