@@ -49,6 +49,13 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 			Username: cfg.Username,
 			Password: cfg.Password,
 		},
+		Settings: clickhouse.Settings{
+			// The labels column uses the JSON type, which a stock ClickHouse
+			// server (e.g. 24.8) still treats as experimental and refuses to
+			// create without this setting. Enable it on every connection so
+			// schema creation and queries work against a default server.
+			"allow_experimental_json_type": 1,
+		},
 	}
 
 	if cfg.Secure {
