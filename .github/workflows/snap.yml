@@ -148,6 +148,38 @@ jobs:
         run: |
           sudo snap install snapcraft --classic --channel=7.x/stable
 
+      # The snap's service uses the default `clickhouse` storage backend on
+      # localhost:9000, so parca exits 1 without a server to talk to. The only
+      # other backend, DuckDB, needs `-tags duckdb` and CGO_ENABLED=1, which the
+      # goreleaser build that produces this snap does not use — so the smoke
+      # tests below have to bring a ClickHouse along.
+      - name: Start ClickHouse
+        run: |
+          set -euo pipefail
+
+          docker run -d --name clickhouse \
+            -p 9000:9000 -p 8123:8123 \
+            --ulimit nofile=262144:262144 \
+            clickhouse/clickhouse-server:25.8
+
+          echo "Waiting for ClickHouse ..."
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null "http://localhost:8123/ping"; then
+              echo "ClickHouse is up"
+              break
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -q '^clickhouse$'; then
+              echo "ClickHouse container exited early"; docker logs clickhouse; exit 1
+            fi
+            sleep 2
+          done
+
+          # Parca speaks the native protocol on :9000, not HTTP on :8123, so
+          # assert that port is actually reachable from the host before we
+          # hand over to the snap.
+          curl -sf -o /dev/null "http://localhost:8123/ping"
+          timeout 5 bash -c 'until (exec 3<>/dev/tcp/127.0.0.1/9000); do sleep 1; done'
+
       - name: Install snap & invoke parca
         run: |
           sudo snap install --dangerous dist/parca*_linux_amd64.snap
@@ -191,6 +223,11 @@ jobs:
         if: failure()
         run: |
           sudo snap logs parca -n=all
+
+      - name: Dump ClickHouse logs
+        if: failure()
+        run: |
+          docker logs clickhouse
 
   release-edge:
     name: Release Snap (latest/edge)
