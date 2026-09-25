@@ -39,6 +39,8 @@ jobs:
               ".github/workflows/docs.yml",
               ".go-version",
               ".node-version",
+              "Makefile",
+              "README.md",
               "go.mod",
               "go.sum"
             ]
