@@ -37,6 +37,8 @@ jobs:
             [
               "**.go",
               ".github/workflows/docs.yml",
+              "Makefile",
+              "README.md",
               ".go-version",
               ".node-version",
               "go.mod",
