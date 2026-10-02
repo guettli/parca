@@ -17,10 +17,22 @@ jobs:
     timeout-minutes: 10
     outputs:
       should_skip: ${{ steps.skip-check.outputs.should_skip }}
+      has_token: ${{ steps.token-check.outputs.has_token }}
     permissions:
       actions: write
       contents: read
     steps:
+      # Publishing needs a PAT that can check out the repo, push the version
+      # bump commit and tags, and authenticate against NPM. Forks that only
+      # track upstream have no GH_PAT_UI, so report its absence here and let the
+      # publish job skip itself. The secrets context is not available in a
+      # job-level `if`, hence the detour through a job output. Keep this step
+      # first so it still runs if the duplicate-action check below fails.
+      - id: token-check
+        env:
+          GH_PAT_UI: ${{ secrets.GH_PAT_UI }}
+        run: echo "has_token=${GH_PAT_UI:+true}" >> "$GITHUB_OUTPUT"
+
       - id: skip-check
         uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
         with:
@@ -35,7 +47,7 @@ jobs:
   publish-ui-components:
     name: Publish UI components to NPM
     needs: skip-check
-    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
+    if: ${{ needs.skip-check.outputs.should_skip != 'true' && needs.skip-check.outputs.has_token == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
