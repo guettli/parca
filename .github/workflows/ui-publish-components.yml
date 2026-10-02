@@ -32,10 +32,33 @@ jobs:
             ]
           skip_after_successful_duplicate: false
 
+  token-check:
+    name: Token check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      has_token: ${{ steps.token-check.outputs.has_token }}
+    permissions:
+      contents: none
+    steps:
+      # Publishing needs a GH_PAT_UI secret to push the Lerna version commit and
+      # tags. Forks that only track upstream have no such secret, so report that
+      # here and let the publish job skip instead of failing the whole workflow.
+      - id: token-check
+        env:
+          GH_PAT_UI: ${{ secrets.GH_PAT_UI }}
+        run: |
+          if [ -n "${GH_PAT_UI}" ]; then
+            echo "has_token=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_token=false" >> "${GITHUB_OUTPUT}"
+            echo "GH_PAT_UI is not configured, skipping the NPM publish." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
   publish-ui-components:
     name: Publish UI components to NPM
-    needs: skip-check
-    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
+    needs: [skip-check, token-check]
+    if: ${{ needs.skip-check.outputs.should_skip != 'true' && needs.token-check.outputs.has_token == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
