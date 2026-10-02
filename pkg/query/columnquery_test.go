@@ -66,7 +66,6 @@ func MustDecompressGzip(t Testing, b []byte) []byte {
 	return content
 }
 
-
 func BenchmarkQuery(b *testing.B) {
 	ctx := context.Background()
 	tracer := noop.NewTracerProvider().Tracer("")
