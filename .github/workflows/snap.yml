@@ -20,6 +20,10 @@ concurrency:
 env:
   # renovate: datasource=go depName=github.com/goreleaser/goreleaser
   GORELEASER_VERSION: v1.26.2
+  # ClickHouse the snap smoke tests run against. 25.3 or newer is required: the
+  # profile table uses the JSON type, which is only production-ready from there.
+  # renovate: datasource=docker depName=clickhouse/clickhouse-server
+  CLICKHOUSE_VERSION: "25.8"
 
 permissions:
   contents: write
@@ -148,6 +152,51 @@ jobs:
         run: |
           sudo snap install snapcraft --classic --channel=7.x/stable
 
+      # The snap's service runs parca with the default `clickhouse` storage
+      # backend on localhost:9000, so without a server to talk to parca exits 1
+      # before it ever listens on :7070. The only other backend, DuckDB, needs
+      # `-tags duckdb` and CGO_ENABLED=1, which the goreleaser build that
+      # produces this snap does not use, so the smoke tests have to bring a
+      # ClickHouse along. One container serves all three smoke steps.
+      - name: Start ClickHouse
+        run: |
+          set -euo pipefail
+
+          # CLICKHOUSE_SKIP_USER_SETUP keeps the image's entrypoint from
+          # restricting user `default` to ::1/127.0.0.1 *inside* the container.
+          # Without it, parca's connection -- which arrives from the docker
+          # bridge gateway, not from loopback -- is rejected with
+          # "Authentication failed: password is incorrect, or there is no user
+          # with such name", and the snap's wrapper has no way to pass
+          # credentials.
+          docker run -d --name clickhouse \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -p 9000:9000 -p 8123:8123 \
+            --ulimit nofile=262144:262144 \
+            "clickhouse/clickhouse-server:${CLICKHOUSE_VERSION}"
+
+          echo "Waiting for ClickHouse ..."
+          for _ in $(seq 1 60); do
+            # Query over HTTP rather than hitting /ping: a query authenticates
+            # as user `default` from the host, which is the path parca takes.
+            if curl -sf -o /dev/null 'http://localhost:8123/?query=SELECT%201'; then
+              echo "ClickHouse is up"
+              break
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -q '^clickhouse$'; then
+              echo "ClickHouse container exited early"
+              docker logs clickhouse
+              exit 1
+            fi
+            sleep 2
+          done
+
+          curl -sf 'http://localhost:8123/?query=SELECT%201'
+
+          # parca speaks the native protocol on :9000, not HTTP on :8123, so
+          # assert that port is reachable too before handing over to the snap.
+          timeout 15 bash -c 'until (exec 3<>/dev/tcp/127.0.0.1/9000); do sleep 1; done'
+
       - name: Install snap & invoke parca
         run: |
           sudo snap install --dangerous dist/parca*_linux_amd64.snap
@@ -191,6 +240,11 @@ jobs:
         if: failure()
         run: |
           sudo snap logs parca -n=all
+
+      - name: Dump ClickHouse logs
+        if: failure()
+        run: |
+          docker logs clickhouse
 
   release-edge:
     name: Release Snap (latest/edge)
