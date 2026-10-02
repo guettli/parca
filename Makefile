@@ -142,6 +142,13 @@ proto/generate: proto/vendor
 
 .PHONY: proto/vendor
 proto/vendor: proto/google/pprof/profile.proto
+
+# Resolves the deps in proto/buf.yaml to their latest commits and rewrites
+# proto/buf.lock. Run this explicitly to pick up new BSR dependency versions;
+# proto/generate deliberately builds against the committed lock file so that
+# upstream publishing new commits cannot make CI fail on unrelated changes.
+.PHONY: proto/dep-update
+proto/dep-update:
 	cd proto && buf dep update
 
 proto/google/pprof/profile.proto:
