@@ -126,6 +126,12 @@ jobs:
       id-token: write
       packages: write
       contents: read
+    env:
+      QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+      # Forks have no Quay credentials and cannot push to the parca-dev
+      # registries either, so they only build and verify the container.
+      PUBLISH_CONTAINER: ${{ github.event_name != 'pull_request' && secrets.QUAY_USERNAME != '' && secrets.QUAY_PASSWORD != '' }}
     steps:
       - name: Install dependencies
         run: dnf install --assumeyes --repo fedora git make jq
@@ -153,21 +159,21 @@ jobs:
         run: podman images | grep 'ghcr.io/parca-dev/parca'
 
       - name: Install cosign
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ env.PUBLISH_CONTAINER == 'true' }}
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
 
       - name: Install crane
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ env.PUBLISH_CONTAINER == 'true' }}
         uses: imjasonh/setup-crane@00c9e93efa4e1138c9a7a5c594acd6c75a2fbf0c # v0.3
 
       - name: Login to registry
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ env.PUBLISH_CONTAINER == 'true' }}
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login -u parca-dev --password-stdin ghcr.io
-          echo "${{ secrets.QUAY_PASSWORD }}" | cosign login -u "${{ secrets.QUAY_USERNAME }}" --password-stdin quay.io
+          echo "${QUAY_PASSWORD}" | cosign login -u "${QUAY_USERNAME}" --password-stdin quay.io
 
       - name: Push and sign container
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ env.PUBLISH_CONTAINER == 'true' }}
         run: |
           make push-container
           make sign-container
