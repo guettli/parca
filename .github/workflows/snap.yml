@@ -198,17 +198,29 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Snap Store credentials are not available in forks, so the upload is
+      # skipped there instead of failing the workflow.
+      HAS_SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS != '' }}
     steps:
+      - name: Skip release without Snap Store credentials
+        if: env.HAS_SNAPCRAFT_STORE_CREDENTIALS != 'true'
+        run: |
+          echo "::notice::SNAPCRAFT_STORE_CREDENTIALS is not set, skipping the Snap Store upload."
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: env.HAS_SNAPCRAFT_STORE_CREDENTIALS == 'true'
         with:
           name: parca-dist-release
           path: dist
 
       - name: Install snapcraft
+        if: env.HAS_SNAPCRAFT_STORE_CREDENTIALS == 'true'
         run: |
           sudo snap install snapcraft --classic --channel=7.x/stable
 
       - name: Release to latest/edge
+        if: env.HAS_SNAPCRAFT_STORE_CREDENTIALS == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
