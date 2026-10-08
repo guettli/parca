@@ -16,11 +16,11 @@
 > overrun). The fifth is a design bug, still open as
 > [#201](https://github.com/guettli/parca/issues/201).
 >
-> My own cluster has since dropped Parca altogether in favour of OpenTelemetry
-> + ClickHouse, which it already runs. Continuous profiling here was for
-> learning rather than need, so one fewer stack to feed won.
+> My own cluster has since dropped Parca altogether in favour of an
+> OpenTelemetry and ClickHouse setup it already runs. Continuous profiling here
+> was for learning rather than need, so one fewer stack to feed won.
 >
-> *Upstream README follows, unchanged.*
+> _Upstream README follows, unchanged._
 
 ---
 
