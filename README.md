@@ -1,3 +1,29 @@
+> ### This fork is not in use any more
+>
+> It existed for one reason: an embedded **DuckDB** storage backend (cgo), so a
+> single node could serve profiles without a separate database. Upstream then
+> grew a **ClickHouse** backend that covers the same need, and this cluster
+> already runs ClickHouse — so the fork lost its reason to exist. `main` here is
+> now pristine upstream; the DuckDB work is archived in
+> [#189](https://github.com/guettli/parca/pull/189).
+>
+> Bringing up that ClickHouse backend surfaced five bugs in it. The four fixes
+> went **upstream**, not here: parca-dev/parca
+> [#6415](https://github.com/parca-dev/parca/pull/6415) (dropped function
+> names), [#6416](https://github.com/parca-dev/parca/pull/6416) and
+> [#6419](https://github.com/parca-dev/parca/pull/6419) (unguarded decoders),
+> [#6418](https://github.com/parca-dev/parca/pull/6418) (Arrow encoder
+> overrun). The fifth is a design bug, still open as
+> [#201](https://github.com/guettli/parca/issues/201).
+>
+> My own cluster has since dropped Parca altogether in favour of OpenTelemetry
+> + ClickHouse, which it already runs. Continuous profiling here was for
+> learning rather than need, so one fewer stack to feed won.
+>
+> *Upstream README follows, unchanged.*
+
+---
+
 [![Apache 2 License](https://img.shields.io/badge/license-Apache%202-blue.svg)](LICENSE)
 ![Build](https://github.com/parca-dev/parca/actions/workflows/build-test.yml/badge.svg)
 ![Container](https://github.com/parca-dev/parca/actions/workflows/container.yml/badge.svg)
